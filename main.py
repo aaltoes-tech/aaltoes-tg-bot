@@ -9,10 +9,13 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from settings import settings
+from db import db
+from repository.user import UserRepository
 
 # All handlers should be attached to the Router (or Dispatcher)
 
 dp = Dispatcher()
+user_repo = UserRepository()
 
 
 @dp.message(CommandStart())
@@ -20,11 +23,13 @@ async def command_start_handler(message: Message) -> None:
     """
     This handler receives messages with `/start` command
     """
-    # Most event objects have aliases for API methods that can be called in events' context
-    # For example if you want to answer to incoming message you can use `message.answer(...)` alias
-    # and the target chat will be passed to :ref:`aiogram.methods.send_message.SendMessage`
-    # method automatically or call API method directly via
-    # Bot instance: `bot.send_message(chat_id=message.chat.id, ...)`
+    # Save user to database
+    await user_repo.save_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.full_name
+    )
+    
     await message.answer(f"Hello, {html.bold(message.from_user.full_name)}!")
 
 
@@ -47,12 +52,18 @@ async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     
-    # Log the database URL (optional, for debugging)
-    if settings.DATABASE_URL:
-        logging.info("Database URL is configured")
+    # Connect to the database
+    await db.connect(settings.DATABASE_URL)
+    
+    # Initialize user table
+    await user_repo.init(db)
     
     # And the run events dispatching
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        # Close the database connection when the bot is stopped
+        await db.close()
 
 
 if __name__ == "__main__":
