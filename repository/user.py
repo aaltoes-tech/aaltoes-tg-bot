@@ -18,8 +18,10 @@ class UserRepository:
         except Exception as e:
             logging.error(f"Failed to initialize user table: {e}")
     
-    async def save_user(self, user_id: int, username: str, name: str):
+    async def save_user(self, user_id: int, username: str | None, name: str):
         """Create or update a user"""
+        if username is None:
+            username = ""
         try:
             logging.info(f"Saving user: {user_id}, {username}, {name}")
             await self.db.execute("""
