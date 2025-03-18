@@ -5,6 +5,7 @@ from os import getenv
 
 # Add dotenv import
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
 
 from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
@@ -12,11 +13,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Bot token can be obtained via https://t.me/BotFather
-TOKEN = getenv("BOT_TOKEN")
+from settings import settings
 
 # All handlers should be attached to the Router (or Dispatcher)
 
@@ -53,8 +50,12 @@ async def echo_handler(message: Message) -> None:
 
 async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls
-    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-
+    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    
+    # Log the database URL (optional, for debugging)
+    if settings.DATABASE_URL:
+        logging.info("Database URL is configured")
+    
     # And the run events dispatching
     await dp.start_polling(bot)
 
