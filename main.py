@@ -1,11 +1,6 @@
 import asyncio
 import logging
 import sys
-from os import getenv
-
-# Add dotenv import
-from dotenv import load_dotenv
-from pydantic_settings import BaseSettings
 
 from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
