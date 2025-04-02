@@ -33,3 +33,5 @@ ENV/
 config.ini
 .env
 *.log
+database.db
+.gitignore

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Application settings."""
     BOT_TOKEN: str
     DATABASE_URL: str | None = None
-
+    LUMA_API_KEY: str
 
 # Initialize settings
 settings = Settings()
