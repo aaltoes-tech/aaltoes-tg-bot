@@ -1,6 +1,5 @@
 import logging
 from db import Database
-from datetime import datetime
 
 class UserRepository:
     async def init(self, db: Database):
@@ -13,8 +12,7 @@ class UserRepository:
                     username TEXT,
                     name TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    role TEXT DEFAULT 'user',
-                    last_refresh TIMESTAMP WITH TIME ZONE
+                    role TEXT DEFAULT 'user'
                 )
             """)
             logging.info("User table initialized")
@@ -68,28 +66,4 @@ class UserRepository:
             return await self.db.fetchrow("SELECT * FROM tg_user WHERE id = $1", user_id)
         except Exception as e:
             logging.error(f"Failed to get user: {e}")
-            return None
-
-    async def update_last_refresh(self, user_id: int) -> None:
-        """Update user's last refresh time"""
-        try:
-            await self.db.execute("""
-                UPDATE tg_user 
-                SET last_refresh = NOW() 
-                WHERE id = $1
-            """, user_id)
-        except Exception as e:
-            logging.error(f"Failed to update last refresh time: {e}")
-
-    async def get_last_refresh(self, user_id: int) -> datetime | None:
-        """Get user's last refresh time"""
-        try:
-            result = await self.db.fetchrow("""
-                SELECT last_refresh 
-                FROM tg_user 
-                WHERE id = $1
-            """, user_id)
-            return result['last_refresh'] if result else None
-        except Exception as e:
-            logging.error(f"Failed to get last refresh time: {e}")
             return None

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any
 
@@ -11,7 +12,7 @@ from aiogram import Bot, Dispatcher, html, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters.command import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -21,13 +22,12 @@ from db import db
 from repository.user import UserRepository
 from repository.events import EventsRepository
 from repository.reminders import RemindersRepository
-from keyboards import create_events_keyboard, create_back_to_events_keyboard, create_event_details_keyboard
+from repository.books import BooksRepository
+from keyboards import create_events_keyboard, create_back_to_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard
 
 # Initialize timezone finder
 tf = TimezoneFinder()
-ADMINS = [
-    '658415666', '468596234'
-]
+
 def get_event_timezone(event: Dict[str, Any]) -> pytz.timezone:
     """Get timezone for an event from event data"""
     try:
@@ -64,6 +64,7 @@ def format_event_time(event: Dict[str, Any]) -> str:
 user_repo = UserRepository()
 events_repo = EventsRepository(api_key=settings.LUMA_API_KEY)
 reminders_repo = RemindersRepository()
+books_repo = BooksRepository()
 
 # Initialize storage
 storage = MemoryStorage()
@@ -75,6 +76,14 @@ dp = Dispatcher(storage=storage)
 current_events: Dict[str, Dict] = {}
 last_events_update: datetime = None
 EVENTS_CACHE_DURATION = timedelta(hours=1)  # Cache events for 1 hour
+
+# Store books data in memory with timestamp
+current_books: List[Dict] = []
+last_books_update: datetime = None
+BOOKS_CACHE_DURATION = timedelta(minutes=5)  # Cache books for 5 minutes
+books_cache_lock = asyncio.Lock()  # Add a lock for thread-safe cache updates
+placeholder_file_id: str = None  # Store Telegram's file_id for the placeholder image
+book_images_cache: Dict[int, str] = {}  # Store file_ids for book images
 
 async def refresh_events() -> None:
     """Refresh events data from the API"""
@@ -99,6 +108,38 @@ async def get_events() -> Tuple[Dict[str, Dict], bool]:
         await refresh_events()
         return current_events, True
     return current_events, False
+
+async def refresh_books() -> None:
+    """Refresh books data from the database"""
+    global current_books, last_books_update
+    async with books_cache_lock:  # Use lock to prevent multiple simultaneous refreshes
+        try:
+            books = await books_repo.get_all_books(db)
+            if books:
+                current_books = books
+                last_books_update = datetime.now()
+                logging.info(f"Books refreshed at {last_books_update}")
+        except Exception as e:
+            logging.error(f"Error refreshing books: {e}")
+
+async def get_books() -> Tuple[List[Dict], bool]:
+    """
+    Get books from cache or refresh if needed
+    Returns: (books_list, was_refreshed)
+    """
+    global current_books, last_books_update
+    
+    # Check if cache is empty or expired
+    if not current_books or not last_books_update or datetime.now() - last_books_update > BOOKS_CACHE_DURATION:
+        # If cache is empty, refresh immediately
+        if not current_books:
+            await refresh_books()
+            return current_books, True
+        
+        # If cache is expired, refresh in background
+        asyncio.create_task(refresh_books())
+    
+    return current_books, False
 
 @dp.message(Command("start"))
 async def command_start_handler(message: Message) -> None:
@@ -256,80 +297,6 @@ async def command_reminders_handler(message: Message) -> None:
     
     await message.answer(message_text)
 
-async def periodic_events_refresh() -> None:
-    """Periodically refresh events data"""
-    while True:
-        await asyncio.sleep(EVENTS_CACHE_DURATION.total_seconds())
-        await refresh_events()
-
-async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
-    """Send a reminder message to the user"""
-    try:
-        message = (
-            f"🔔 Reminder: {event['title']} starts in 1 hour!\n\n"
-            f"📅 {format_event_time(event)}\n"
-            f"📍 {event['location']}"
-        )
-        await bot.send_message(user_id, message)
-        
-        # Delete the reminder from the database after sending
-        await reminders_repo.delete_reminder(db, user_id, event['id'])
-                
-    except Exception as e:
-        logging.error(f"Error sending reminder: {e}")
-
-async def schedule_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
-    """Schedule a reminder for the event"""
-    try:
-        # Calculate time until reminder (1 hour before event)
-        now = datetime.now(pytz.UTC)
-        reminder_time = event['start_time'] - timedelta(hours=1)
-        
-        if reminder_time <= now:
-            # If event is less than 1 hour away, send reminder immediately
-            await send_reminder(bot, user_id, event)
-            return
-        
-        # Save reminder to database
-        await reminders_repo.save_reminder(db, user_id, event['id'], reminder_time)
-        
-        # Calculate delay in seconds
-        delay = (reminder_time - now).total_seconds()
-        
-        # Create and store the reminder task
-        task = asyncio.create_task(
-            asyncio.sleep(delay),
-            name=f"reminder_{event['id']}_{user_id}"
-        )
-        
-        # Wait for the delay and send reminder
-        await task
-        await send_reminder(bot, user_id, event)
-                
-    except Exception as e:
-        logging.error(f"Error scheduling reminder: {e}")
-
-async def check_reminders(bot: Bot) -> None:
-    """Check for reminders that need to be sent"""
-    while True:
-        try:
-            reminders = await reminders_repo.get_reminders(db)
-            now = datetime.now(pytz.UTC)
-            
-            for reminder in reminders:
-                if reminder['reminder_time'] <= now:
-                    events, _ = await get_events()
-                    event = events.get(reminder['event_id'])
-                    if event:
-                        await send_reminder(bot, reminder['user_id'], event)
-            
-            # Check every minute
-            await asyncio.sleep(60)
-            
-        except Exception as e:
-            logging.error(f"Error checking reminders: {e}")
-            await asyncio.sleep(60)
-
 @dp.callback_query(F.data.startswith("reminder_"))
 async def reminder_callback_handler(callback: CallbackQuery) -> None:
     """Handle reminder button clicks"""
@@ -434,19 +401,308 @@ async def remove_reminder_handler(callback: CallbackQuery) -> None:
     
     await callback.answer("Reminder removed!")
 
+async def periodic_events_refresh() -> None:
+    """Periodically refresh events data"""
+    while True:
+        await asyncio.sleep(EVENTS_CACHE_DURATION.total_seconds())
+        await refresh_events()
+
+async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
+    """Send a reminder message to the user"""
+    try:
+        message = (
+            f"🔔 Reminder: {event['title']} starts in 1 hour!\n\n"
+            f"📅 {format_event_time(event)}\n"
+            f"📍 {event['location']}"
+        )
+        await bot.send_message(user_id, message)
+        
+        # Delete the reminder from the database after sending
+        await reminders_repo.delete_reminder(db, user_id, event['id'])
+                
+    except Exception as e:
+        logging.error(f"Error sending reminder: {e}")
+
+async def schedule_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
+    """Schedule a reminder for the event"""
+    try:
+        # Calculate time until reminder (1 hour before event)
+        now = datetime.now(pytz.UTC)
+        reminder_time = event['start_time'] - timedelta(hours=1)
+        
+        if reminder_time <= now:
+            # If event is less than 1 hour away, send reminder immediately
+            await send_reminder(bot, user_id, event)
+            return
+        
+        # Save reminder to database
+        await reminders_repo.save_reminder(db, user_id, event['id'], reminder_time)
+        
+        # Calculate delay in seconds
+        delay = (reminder_time - now).total_seconds()
+        
+        # Create and store the reminder task
+        task = asyncio.create_task(
+            asyncio.sleep(delay),
+            name=f"reminder_{event['id']}_{user_id}"
+        )
+        
+        # Wait for the delay and send reminder
+        await task
+        await send_reminder(bot, user_id, event)
+                
+    except Exception as e:
+        logging.error(f"Error scheduling reminder: {e}")
+
+async def check_reminders(bot: Bot) -> None:
+    """Check for reminders that need to be sent"""
+    while True:
+        try:
+            reminders = await reminders_repo.get_reminders(db)
+            now = datetime.now(pytz.UTC)
+            
+            for reminder in reminders:
+                if reminder['reminder_time'] <= now:
+                    events, _ = await get_events()
+                    event = events.get(reminder['event_id'])
+                    if event:
+                        await send_reminder(bot, reminder['user_id'], event)
+            
+            # Check every minute
+            await asyncio.sleep(60)
+            
+        except Exception as e:
+            logging.error(f"Error checking reminders: {e}")
+            await asyncio.sleep(60)
+
+async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> None:
+    """Show paginated list of books"""
+    global placeholder_file_id  # Move global declaration to the top
+    
+    try:
+        # Get books from cache
+        books, _ = await get_books()
+        
+        if not books:
+            if isinstance(message, Message):
+                await message.answer("No books available.")
+            else:
+                await message.message.edit_text("No books available.")
+            return
+        
+        # Filter books to only include unique titles
+        unique_books = []
+        seen_titles = set()
+        
+        for book in books:
+            title = book.get('title', '').lower().strip()
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique_books.append(book)
+        
+        if not unique_books:
+            if isinstance(message, Message):
+                await message.answer("No unique books available.")
+            else:
+                await message.message.edit_text("No unique books available.")
+            return
+        
+        # Create keyboard with pagination
+        reply_markup = create_books_keyboard(unique_books, page)
+        
+        if isinstance(message, CallbackQuery):
+            # Always edit the existing photo message
+            if placeholder_file_id:
+                # Use cached file_id
+                await message.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=placeholder_file_id,
+                        caption="Welcome to Aaltoes Library!"
+                    ),
+                    reply_markup=reply_markup
+                )
+            else:
+                # First time sending the image
+                photo = FSInputFile("images/books_placeholder.png")
+                sent_message = await message.message.answer_photo(
+                    photo=photo,
+                    caption="Welcome to Aaltoes Library!",
+                    reply_markup=reply_markup
+                )
+                # Store the file_id for future use
+                placeholder_file_id = sent_message.photo[-1].file_id
+                # Delete the original message
+                await message.message.delete()
+        else:
+            # If it's a new message, send a photo message
+            if placeholder_file_id:
+                # Use cached file_id
+                await message.answer_photo(
+                    photo=placeholder_file_id,
+                    caption="Welcome to Aaltoes Library!",
+                    reply_markup=reply_markup
+                )
+            else:
+                # First time sending the image
+                photo = FSInputFile("images/books_placeholder.png")
+                sent_message = await message.answer_photo(
+                    photo=photo,
+                    caption="Welcome to Aaltoes Library!",
+                    reply_markup=reply_markup
+                )
+                # Store the file_id for future use
+                placeholder_file_id = sent_message.photo[-1].file_id
+            
+    except Exception as e:
+        logging.error(f"Error in show_books_list: {e}")
+        if isinstance(message, Message):
+            await message.answer("❌ An error occurred while loading the books list. Please try again.")
+        else:
+            await message.message.answer("❌ An error occurred while loading the books list. Please try again.")
+
+@dp.callback_query(F.data.startswith("back_to_books"))
+async def back_to_books_handler(callback: CallbackQuery) -> None:
+    """Handle back to books button click"""
+    # Get the page number from the callback data
+    page = int(callback.data.split("_")[3]) if len(callback.data.split("_")) > 3 else 0
+    await show_books_list(callback, page)
+
+@dp.message(Command("books"))
+async def command_books_handler(message: Message) -> None:
+    """Handler for /books command"""
+    await show_books_list(message)
+
+@dp.callback_query(F.data.startswith("books_page_"))
+async def books_page_handler(callback: CallbackQuery) -> None:
+    """Handle book pagination"""
+    page = int(callback.data.split("_")[2])
+    await show_books_list(callback, page)
+
+@dp.callback_query(F.data.startswith("book_"))
+async def book_callback_handler(callback: CallbackQuery) -> None:
+    """Handle book button clicks"""
+    book_id = int(callback.data.split("_")[1])
+    
+    # Get books from cache
+    books, _ = await get_books()
+    book = next((b for b in books if b['book_id'] == book_id), None)
+    
+    if not book:
+        await callback.message.edit_text(
+            "Book not found. Please try again.",
+            reply_markup=create_book_details_keyboard(book_id)
+        )
+        return
+    
+    # Build message text with optional fields
+    message_text = f"📚 *{book.get('title', 'No title available')}*\n\n"
+    
+    if book.get('author'):
+        message_text += f"👤 Author: {book['author']}\n"
+    
+    if book.get('year'):
+        message_text += f"📅 Year: {book['year']}\n"
+    
+    if book.get('description'):
+        message_text += f"\n{book['description']}"
+    
+    try:
+        if book.get('image'):
+            # Validate image path
+            image_path = book['image']
+            if not os.path.exists(image_path):
+                logging.error(f"Image file not found: {image_path}")
+                await callback.message.edit_text(
+                    "Sorry, the image file was not found.",
+                    reply_markup=create_book_details_keyboard(book_id)
+                )
+                return
+
+            if not os.path.isfile(image_path):
+                logging.error(f"Path is not a file: {image_path}")
+                await callback.message.edit_text(
+                    "Sorry, the image path is not valid.",
+                    reply_markup=create_book_details_keyboard(book_id)
+                )
+                return
+
+            # Check file permissions
+            if not os.access(image_path, os.R_OK):
+                logging.error(f"No read permissions for file: {image_path}")
+                await callback.message.edit_text(
+                    "Sorry, cannot access the image file.",
+                    reply_markup=create_book_details_keyboard(book_id)
+                )
+                return
+
+            # Get the current page from the callback data
+            current_page = int(callback.data.split("_")[2]) if len(callback.data.split("_")) > 2 else 0
+            
+            # Check if we have a cached file_id for this book
+            if book_id in book_images_cache:
+                # Use cached file_id
+                await callback.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=book_images_cache[book_id],
+                        caption=message_text,
+                        parse_mode=ParseMode.MARKDOWN
+                    ),
+                    reply_markup=create_book_details_keyboard(book_id, current_page)
+                )
+            else:
+                # First time sending this book's image
+                photo = FSInputFile(image_path)
+                # Edit the existing message with the new photo
+                sent_message = await callback.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=photo,
+                        caption=message_text,
+                        parse_mode=ParseMode.MARKDOWN
+                    ),
+                    reply_markup=create_book_details_keyboard(book_id, current_page)
+                )
+                # Store the file_id for future use
+                book_images_cache[book_id] = sent_message.photo[-1].file_id
+        else:
+            # If no image, just edit text
+            current_page = int(callback.data.split("_")[2]) if len(callback.data.split("_")) > 2 else 0
+            await callback.message.edit_text(
+                message_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=create_book_details_keyboard(book_id, current_page)
+            )
+    except Exception as e:
+        logging.error(f"Error sending book details: {e}")
+        logging.error(f"Book data: {book}")
+        await callback.message.edit_text(
+            "Sorry, there was an error displaying the book details. Please try again.",
+            reply_markup=create_book_details_keyboard(book_id)
+        )
+
+async def periodic_books_refresh() -> None:
+    """Periodically refresh books data"""
+    while True:
+        await asyncio.sleep(BOOKS_CACHE_DURATION.total_seconds())
+        await refresh_books()
+
 async def main() -> None:
+    
     # Initialize Bot instance with default bot properties which will be passed to all API calls
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     
     # Connect to the database
-    await db.connect(settings.DATABASE_URL)
+    await db.connect(settings.DATABASE_URL_UNPOOLED)
     
     # Initialize tables
     await user_repo.init(db)
     await reminders_repo.init(db)
+    await books_repo.init(db)
     
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
+    
+    # Start periodic books refresh
+    asyncio.create_task(periodic_books_refresh())
     
     # Start reminders checker
     asyncio.create_task(check_reminders(bot))
