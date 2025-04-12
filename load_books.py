@@ -21,7 +21,7 @@ async def main():
         await books_repo.init(db)
         
         # Upload books from CSV
-        await books_repo.upload_books_from_csv(db, "books/books.csv")
+        await books_repo.upload_books_from_csv(db, "books.csv")
         
         # Verify books were loaded
         books = await books_repo.get_all_books(db)

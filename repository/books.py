@@ -152,7 +152,7 @@ class BooksRepository:
             
             # Convert image paths to absolute paths
             if 'image' in df.columns:
-                df['image'] = df['image'].apply(lambda x: os.path.abspath(os.path.join('books/books_images', str(x).strip())) 
+                df['image'] = df['image'].apply(lambda x: os.path.abspath(os.path.join('images/books_images', str(x).strip())) 
                                               if not pd.isna(x) else None)
             
             # Insert records
