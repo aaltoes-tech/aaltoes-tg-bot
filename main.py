@@ -616,6 +616,20 @@ async def book_instance_handler(callback: CallbackQuery) -> None:
         book_id = int(parts[3])
         logging.info(f"Processing instance {instance_id} for book {book_id}")
         
+        # Get current instance status
+        instances = await books_repo.get_book_instances(db, book_id)
+        instance = next((i for i in instances if i['instance_id'] == instance_id), None)
+        
+        if not instance:
+            logging.error(f"Instance {instance_id} not found")
+            await callback.answer("❌ Instance not found", show_alert=True)
+            return
+            
+        if not instance['available']:
+            logging.error(f"Instance {instance_id} is not available")
+            await callback.answer("❌ This copy is no longer available", show_alert=True)
+            return
+        
         # Update instance availability
         await books_repo.update_book_availability(db, instance_id, False)
         logging.info(f"Updated availability for instance {instance_id}")
@@ -637,7 +651,6 @@ async def book_instance_handler(callback: CallbackQuery) -> None:
         else:
             success_message = "✅ Successfully borrowed the book!"
         
-            
         # Get the current image file_id from the message
         current_photo = callback.message.photo[-1].file_id if callback.message.photo else None
         

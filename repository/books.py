@@ -259,6 +259,7 @@ class BooksRepository:
 
     async def update_book_availability(self, db, instance_id: int, available: bool) -> None:
         """Update availability status of a book instance"""
+       
         try:
             await db.execute(f"""
                 UPDATE {self.instances_table_name}
