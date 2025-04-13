@@ -23,7 +23,7 @@ from repository.user import UserRepository
 from repository.events import EventsRepository
 from repository.reminders import RemindersRepository
 from repository.books import BooksRepository
-from keyboards import create_events_keyboard, create_back_to_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard
+from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard
 
 # Initialize timezone finder
 tf = TimezoneFinder()
@@ -80,7 +80,7 @@ EVENTS_CACHE_DURATION = timedelta(hours=1)  # Cache events for 1 hour
 # Store books data in memory with timestamp
 current_books: List[Dict] = []
 last_books_update: datetime = None
-BOOKS_CACHE_DURATION = timedelta(minutes=5)  # Cache books for 5 minutes
+BOOKS_CACHE_DURATION = timedelta(hours=1)  # Cache books for 1 hour
 books_cache_lock = asyncio.Lock()  # Add a lock for thread-safe cache updates
 placeholder_file_id: str = None  # Store Telegram's file_id for the placeholder image
 book_images_cache: Dict[int, str] = {}  # Store file_ids for book images
@@ -109,21 +109,25 @@ async def get_events() -> Tuple[Dict[str, Dict], bool]:
         return current_events, True
     return current_events, False
 
-async def get_books() -> Tuple[List[Dict], bool]:
-    """Get books from cache or database if cache is stale"""
+async def get_books(force_refresh: bool = False) -> Tuple[List[Dict], bool]:
+    """Get books from cache or database if cache is stale or force_refresh is True"""
     global current_books, last_books_update
     
     async with books_cache_lock:
         now = datetime.now()
-        if not current_books or not last_books_update or (now - last_books_update) > BOOKS_CACHE_DURATION:
+        if force_refresh or not current_books or not last_books_update or (now - last_books_update) > BOOKS_CACHE_DURATION:
             try:
-                # Get fresh data from database
+                logging.info("Refreshing books cache")
                 current_books = await books_repo.get_all_books(db)
                 last_books_update = now
+                logging.info(f"Successfully refreshed {len(current_books)} books")
+                logging.info(f"Books data: {current_books[:2]}")  # Log first two books for debugging
                 return current_books, True
             except Exception as e:
                 logging.error(f"Error refreshing books: {e}")
                 return current_books, False
+        logging.debug("Using cached books data")
+        logging.info(f"Using cached books: {len(current_books)} books")
         return current_books, False
 
 @dp.message(Command("start"))
@@ -460,31 +464,6 @@ async def check_reminders(bot: Bot) -> None:
             logging.error(f"Error checking reminders: {e}")
             await asyncio.sleep(60)
 
-def process_books(books: List[Dict]) -> List[Dict]:
-    """Process books to get unique titles with availability counts"""
-    unique_books = []
-    seen_titles = set()
-    
-    for book in books:
-        title = book.get('title', '').lower().strip()
-        if title and title not in seen_titles:
-            seen_titles.add(title)
-            total = 0
-            occupied = 0
-            for b in books:
-                if b.get('title', '').lower().strip() == title:
-                    total += 1
-                    if not b.get('available', True):
-                        occupied += 1
-            processed_book = {
-                'book_id': book['book_id'],
-                'title': book['title'],
-                'availability': {'total': total, 'occupied': occupied}
-            }
-            unique_books.append(processed_book)
-    
-    return unique_books
-
 async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> None:
     """Show paginated list of books"""
     global placeholder_file_id
@@ -500,27 +479,20 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 await message.message.edit_text("No books available.")
             return
         
-        # Process books to get unique titles with availability
-        processed_books = process_books(books)
-        
-        if not processed_books:
-            if isinstance(message, Message):
-                await message.answer("No unique books available.")
-            else:
-                await message.message.edit_text("No unique books available.")
-            return
-        
-        # Create keyboard with pagination
-        reply_markup = create_books_keyboard(processed_books, page)
+        # Create keyboard with pagination using the provided page parameter
+        reply_markup = create_books_keyboard(books, page)
+        logging.info(f"Creating books keyboard for page {page}")
         
         if isinstance(message, CallbackQuery):
-            # Always edit the existing photo message
-            if placeholder_file_id:
-                # Use cached file_id
+            # Get the current photo file_id
+            current_photo = message.message.photo[-1].file_id if message.message.photo else placeholder_file_id
+            
+            if current_photo:
+                # Edit the existing photo message
                 await message.message.edit_media(
                     media=InputMediaPhoto(
-                        media=placeholder_file_id,
-                        caption="Welcome to Aaltoes Library!"
+                        media=current_photo,
+                        caption=f"Welcome to Aaltoes Library! (Page {page + 1})"
                     ),
                     reply_markup=reply_markup
                 )
@@ -529,7 +501,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 photo = FSInputFile("images/books_placeholder.png")
                 sent_message = await message.message.answer_photo(
                     photo=photo,
-                    caption="Welcome to Aaltoes Library!",
+                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
                     reply_markup=reply_markup
                 )
                 # Store the file_id for future use
@@ -542,7 +514,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 # Use cached file_id
                 await message.answer_photo(
                     photo=placeholder_file_id,
-                    caption="Welcome to Aaltoes Library!",
+                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
                     reply_markup=reply_markup
                 )
             else:
@@ -550,7 +522,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 photo = FSInputFile("images/books_placeholder.png")
                 sent_message = await message.answer_photo(
                     photo=photo,
-                    caption="Welcome to Aaltoes Library!",
+                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
                     reply_markup=reply_markup
                 )
                 # Store the file_id for future use
@@ -563,47 +535,217 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
         else:
             await message.message.answer("❌ An error occurred while loading the books list. Please try again.")
 
-@dp.callback_query(F.data.startswith("back_to_books"))
-async def back_to_books_handler(callback: CallbackQuery) -> None:
-    """Handle back to books button click"""
-    # Get the page number from the callback data
-    page = int(callback.data.split("_")[3]) if len(callback.data.split("_")) > 3 else 0
-    # Get books from cache (no refresh needed for back navigation)
-    books, _ = await get_books()
-    await show_books_list(callback, page)
+@dp.callback_query(F.data.startswith("book_instance_select_"))
+async def book_instance_select_handler(callback: CallbackQuery) -> None:
+    """Handle book instance selection"""
+    logging.info(f"Received instance selection callback: {callback.data}")
+    try:
+        # Extract book ID from callback data
+        book_id = int(callback.data.split("_")[-1])
+        logging.info(f"Handling instance selection for book {book_id}")
+        
+        # Get book details and instances
+        books, _ = await get_books(force_refresh=True)  # Refresh to get latest availability
+        book = next((b for b in books if b['book_id'] == book_id), None)
+        if not book:
+            logging.error(f"Book {book_id} not found")
+            await callback.answer("Book not found", show_alert=True)
+            return
+            
+        instances = await books_repo.get_book_instances(db, book_id)
+        logging.info(f"Found {len(instances)} instances for book {book_id}")
+        if not instances:
+            logging.error(f"No instances found for book {book_id}")
+            await callback.answer("No instances found", show_alert=True)
+            return
+            
+        # Filter available instances
+        available_instances = [i for i in instances if i['available']]
+        logging.info(f"Found {len(available_instances)} available instances")
+        if not available_instances:
+            logging.error(f"No available instances for book {book_id}")
+            await callback.answer("No available copies", show_alert=True)
+            return
+            
+        # Create instance selection keyboard
+        keyboard = []
+        for instance in available_instances:
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"Copy #{instance['instance_id']}",
+                    callback_data=f"book_instance_{instance['instance_id']}_{book_id}"
+                )
+            ])
+            
+        # Add back button
+        keyboard.append([
+            InlineKeyboardButton(
+                text="⬅️ Back to Book",
+                callback_data=f"book_{book_id}_0"  # Added page number for back navigation
+            )
+        ])
+        
+        # Edit message to show instance selection
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption="Select a copy to borrow:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+            )
+        else:
+            await callback.message.edit_text(
+                text="Select a copy to borrow:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in book_instance_select_handler: {str(e)}")
+        logging.error(f"Callback data: {callback.data}")
+        await callback.answer("An error occurred", show_alert=True)
 
-@dp.message(Command("books"))
-async def command_books_handler(message: Message) -> None:
-    """Handle /books command"""
-    # Refresh books if cache is stale
-    books, refreshed = await get_books()
-    if refreshed:
-        logging.info("Refreshed books cache")
-    await show_books_list(message)
+@dp.callback_query(F.data.startswith("book_instance_"))
+async def book_instance_handler(callback: CallbackQuery) -> None:
+    """Handle book instance selection"""
+    logging.info(f"Received instance selection callback: {callback.data}")
+    try:
+        # Get instance_id and book_id from callback data
+        # Format: book_instance_{instance_id}_{book_id}
+        parts = callback.data.split("_")
+        instance_id = int(parts[2])
+        book_id = int(parts[3])
+        logging.info(f"Processing instance {instance_id} for book {book_id}")
+        
+        # Update instance availability
+        await books_repo.update_book_availability(db, instance_id, False)
+        logging.info(f"Updated availability for instance {instance_id}")
+        
+        # Get book details for success message
+        books, _ = await get_books(force_refresh=True)  # Refresh to get updated availability
+        book = next((b for b in books if b['book_id'] == book_id), None)
+        logging.info(f"Found book: {book}")
+        
+        if book:
+            success_message = (
+                f"✅ Successfully borrowed\n\n"
+                f"📚 {book['title']}\n"
+                f"👤 Author: {book.get('author', 'Unknown')}\n"
+                f"📖 Copy #{instance_id}\n\n"
+                f"🔔 Reminder: You have 14 days to return the book.\n\n"
+                f"Back to library /books"
+            )
+        else:
+            success_message = "✅ Successfully borrowed the book!"
+        
+            
+        # Get the current image file_id from the message
+        current_photo = callback.message.photo[-1].file_id if callback.message.photo else None
+        
+        if current_photo:
+            # Edit the existing photo message with success message
+            await callback.message.edit_media(
+                media=InputMediaPhoto(
+                    media=current_photo,
+                    caption=success_message
+                )
+            )
+        else:
+            # If no photo, just send text message
+            await callback.message.delete()
+            await callback.message.answer(success_message)
+            
+    except Exception as e:
+        logging.error(f"Error in book_instance_handler: {e}")
+        logging.error(f"Callback data: {callback.data}")
+        await callback.answer("❌ An error occurred while booking the copy. Please try again.")
 
 @dp.callback_query(F.data.startswith("books_page_"))
 async def books_page_handler(callback: CallbackQuery) -> None:
     """Handle books pagination"""
-    # Get books from cache (no refresh needed for pagination)
-    books, _ = await get_books()
-    page = int(callback.data.split("_")[2])
-    await show_books_list(callback, page)
+    try:
+        # Get page number from callback data
+        page = int(callback.data.split("_")[2])
+        logging.info(f"Handling page navigation to page {page}")
+        
+        # Get books from cache without forcing refresh
+        books, _ = await get_books(force_refresh=False)
+
+        if not books:
+            await callback.answer("No books available", show_alert=True)
+            return
+            
+        # Create keyboard with pagination
+        reply_markup = create_books_keyboard(books, page)
+        
+        # Edit the message with new keyboard
+        if callback.message.photo:
+            # Get the current photo file_id
+            current_photo = callback.message.photo[-1].file_id
+            await callback.message.edit_media(
+                media=InputMediaPhoto(
+                    media=current_photo,
+                    caption=f"Welcome to Aaltoes Library! "
+                ),
+                reply_markup=reply_markup
+            )
+        else:
+            await callback.message.edit_text(
+                text=f"Welcome to Aaltoes Library!",
+                reply_markup=reply_markup
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in books_page_handler: {str(e)}")
+        logging.error(f"Callback data: {callback.data}")
+        await callback.answer("An error occurred while changing pages", show_alert=True)
+
+
+@dp.message(Command("books"))
+async def command_books_handler(message: Message) -> None:
+    """Handle /books command"""
+    try:
+        # Force refresh books if cache is stale
+        books, refreshed = await get_books(force_refresh=True)
+        if not books:
+            await message.answer("❌ No books available at the moment. Please try again later.")
+            return
+            
+        if refreshed:
+            logging.info("Refreshed books cache")
+        await show_books_list(message)
+    except Exception as e:
+        logging.error(f"Error in /books command: {e}")
+        await message.answer("❌ An error occurred while loading the books. Please try again.")
 
 @dp.callback_query(F.data.startswith("book_"))
 async def book_callback_handler(callback: CallbackQuery) -> None:
     """Handle book button clicks"""
-    book_id = int(callback.data.split("_")[1])
+    logging.info(f"Book callback received: {callback.data}")
+        
+    # Get book_id and current page from callback data
+    # Format: book_{book_id}_{page}
+    parts = callback.data.split("_")
+    book_id = int(parts[1])
+    current_page = int(parts[2]) if len(parts) > 2 else 0
     
-    # Get books from cache
-    books, _ = await get_books()
+    # Get books from cache without forcing refresh
+    books, _ = await get_books(force_refresh=False)
     book = next((b for b in books if b['book_id'] == book_id), None)
     
     if not book:
-        await callback.message.edit_text(
-            "Book not found. Please try again.",
-            reply_markup=create_book_details_keyboard(book_id)
-        )
+        # Check if the current message is a photo or text
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption="Book not found. Please try again.",
+                reply_markup=create_book_details_keyboard(book_id, current_page, 0)
+            )
+        else:
+            await callback.message.edit_text(
+                "Book not found. Please try again.",
+                reply_markup=create_book_details_keyboard(book_id, current_page, 0)
+            )
         return
+    
+    # Get book instances
+    instances = await books_repo.get_book_instances(db, book_id)
     
     # Build message text with optional fields
     message_text = f"📚 *{book.get('title', 'No title available')}*\n\n"
@@ -614,95 +756,140 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
     if book.get('year'):
         message_text += f"📅 Year: {book['year']}\n"
     
-    if book.get('description'):
-        message_text += f"\n{book['description']}"
+    # Add availability info from instances
+    total_instances = len(instances)
+    available_instances = sum(1 for i in instances if i['available'])
+    message_text += f"📖 Copies: {available_instances}/{total_instances} available\n\n"
     
+    if book.get('description'):
+        message_text += f"{book['description']}\n\n"
+
     try:
-        if book.get('image'):
-            # Validate image path
-            image_path = book['image']
-            if not os.path.exists(image_path):
-                logging.error(f"Image file not found: {image_path}")
-                await callback.message.edit_text(
-                    "Sorry, the image file was not found.",
-                    reply_markup=create_book_details_keyboard(book_id)
-                )
-                return
-
-            if not os.path.isfile(image_path):
-                logging.error(f"Path is not a file: {image_path}")
-                await callback.message.edit_text(
-                    "Sorry, the image path is not valid.",
-                    reply_markup=create_book_details_keyboard(book_id)
-                )
-                return
-
-            # Check file permissions
-            if not os.access(image_path, os.R_OK):
-                logging.error(f"No read permissions for file: {image_path}")
-                await callback.message.edit_text(
-                    "Sorry, cannot access the image file.",
-                    reply_markup=create_book_details_keyboard(book_id)
-                )
-                return
-
-            # Get the current page from the callback data
-            current_page = int(callback.data.split("_")[2]) if len(callback.data.split("_")) > 2 else 0
-            
-            # Check if we have a cached file_id for this book
-            if book_id in book_images_cache:
-                # Use cached file_id
-                await callback.message.edit_media(
-                    media=InputMediaPhoto(
-                        media=book_images_cache[book_id],
-                        caption=message_text,
-                        parse_mode=ParseMode.MARKDOWN
-                    ),
-                    reply_markup=create_book_details_keyboard(book_id, current_page)
-                )
+        # Get image from the first instance
+        image_path = None
+        if instances and instances[0].get('image'):
+            image_path = instances[0]['image']
+        
+        # Check if the current message is a photo or text
+        if callback.message.photo:
+            if image_path:
+                # Check if we have a cached file_id for this image
+                if book_id in book_images_cache:
+                    # Use cached file_id
+                    await callback.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=book_images_cache[book_id],
+                            caption=message_text,
+                            parse_mode=ParseMode.MARKDOWN
+                        ),
+                        reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+                    )
+                else:
+                    # First time sending this image
+                    photo = FSInputFile(image_path)
+                    sent_message = await callback.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=photo,
+                            caption=message_text,
+                            parse_mode=ParseMode.MARKDOWN
+                        ),
+                        reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+                    )
+                    # Store the file_id for future use
+                    book_images_cache[book_id] = sent_message.photo[-1].file_id
             else:
-                # First time sending this book's image
-                photo = FSInputFile(image_path)
-                # Edit the existing message with the new photo
-                sent_message = await callback.message.edit_media(
-                    media=InputMediaPhoto(
-                        media=photo,
-                        caption=message_text,
-                        parse_mode=ParseMode.MARKDOWN
-                    ),
-                    reply_markup=create_book_details_keyboard(book_id, current_page)
+                # If no image, just edit the caption
+                await callback.message.edit_caption(
+                    caption=message_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
                 )
-                # Store the file_id for future use
-                book_images_cache[book_id] = sent_message.photo[-1].file_id
         else:
-            # If no image, just edit text
-            current_page = int(callback.data.split("_")[2]) if len(callback.data.split("_")) > 2 else 0
+            # If it's a text message, just edit the text
             await callback.message.edit_text(
                 message_text,
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=create_book_details_keyboard(book_id, current_page)
+                reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
             )
     except Exception as e:
         logging.error(f"Error sending book details: {e}")
         logging.error(f"Book data: {book}")
+        # Check if the current message is a photo or text
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption="Sorry, there was an error displaying the book details. Please try again.",
+                reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+            )
+        else:
+            await callback.message.edit_text(
+                "Sorry, there was an error displaying the book details. Please try again.",
+                reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+            )
+
+@dp.callback_query(F.data.startswith("return_to_books_"))
+async def return_to_books_handler(callback: CallbackQuery) -> None:
+    """Handle return to books button click"""
+    global placeholder_file_id
+    
+    try:
+        # Get the page number from the callback data
+        # Format: return_to_books_{book_id}_{page}
+        parts = callback.data.split("_")
+        if len(parts) >= 4:
+            page = int(parts[3])
+        else:
+            page = 0
+            
+        # Get books from cache (no refresh needed for back navigation)
+        books, _ = await get_books(force_refresh=False)
+        if not books:
+            await callback.message.edit_text(
+                "No books available. Please use /books command.",
+                reply_markup=create_books_keyboard([], 0)
+            )
+            return
+        
+        # Always edit the photo message
+        if placeholder_file_id:
+            await callback.message.edit_media(
+                media=InputMediaPhoto(
+                    media=placeholder_file_id,
+                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})"
+                ),
+                reply_markup=create_books_keyboard(books, page)
+            )
+        else:
+            # If no cached file_id, send a new photo message
+            photo = FSInputFile("images/books_placeholder.png")
+            sent_message = await callback.message.answer_photo(
+                photo=photo,
+                caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
+                reply_markup=create_books_keyboard(books, page)
+            )
+            # Store the file_id for future use
+            placeholder_file_id = sent_message.photo[-1].file_id
+            # Delete the original message
+            await callback.message.delete()
+            
+    except Exception as e:
+        logging.error(f"Error in return_to_books_handler: {e}")
+        # Get books again to ensure we have data for the keyboard
+        books, _ = await get_books(force_refresh=False)
         await callback.message.edit_text(
-            "Sorry, there was an error displaying the book details. Please try again.",
-            reply_markup=create_book_details_keyboard(book_id)
+            "❌ An error occurred while going back to the books list. Please try again.",
+            reply_markup=create_books_keyboard(books, 0)
         )
 
 async def main() -> None:
     
     # Initialize Bot instance with default bot properties which will be passed to all API calls
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    
     # Connect to the database
     await db.connect(settings.DATABASE_URL_UNPOOLED)
-    
     # Initialize tables
     await user_repo.init(db)
     await reminders_repo.init(db)
     await books_repo.init(db)
-    
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
     

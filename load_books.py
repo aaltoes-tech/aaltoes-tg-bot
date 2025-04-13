@@ -13,26 +13,49 @@ async def main():
     await db.connect(settings.DATABASE_URL_UNPOOLED)
     
     try:
-        # Clear existing books
-        await db.execute("TRUNCATE TABLE books RESTART IDENTITY")
+        # Initialize books table first
+        await books_repo.init(db)
+        logging.info("Initialized books tables")
+        
+        # Clear existing data
+        await db.execute("TRUNCATE TABLE books_instances CASCADE")
+        await db.execute("TRUNCATE TABLE books CASCADE")
         logging.info("Cleared existing books from database")
         
-        # Initialize books table
-        await books_repo.init(db)
-        
         # Upload books from CSV
-        await books_repo.upload_books_from_csv(db, "books.csv")
+        try:
+            await books_repo.upload_books_from_csv(db, "books.csv", "books_instances.csv")
+        except Exception as e:
+            logging.error(f"Error uploading books: {e}")
+            sys.exit(1)
         
         # Verify books were loaded
         books = await books_repo.get_all_books(db)
-        logging.info(f"Loaded {len(books)} books into the database")
+        if not books:
+            logging.error("No books were loaded into the database")
+            sys.exit(1)
+            
+        logging.info(f"Successfully loaded {len(books)} books into the database")
+        
+        # Verify instances were loaded
+        total_instances = 0
+        for book in books:
+            instances = await books_repo.get_book_instances(db, book['book_id'])
+            total_instances += len(instances)
+            logging.info(f"Book '{book['title']}' has {len(instances)} instances")
+            
+        logging.info(f"Total instances loaded: {total_instances}")
         
     except Exception as e:
         logging.error(f"Error loading books: {e}")
+        sys.exit(1)
     finally:
         # Close database connection
         await db.close()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     asyncio.run(main()) 
