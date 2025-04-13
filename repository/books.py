@@ -26,6 +26,7 @@ class BooksRepository:
                     title VARCHAR(255),
                     description TEXT,
                     image VARCHAR(255) NOT NULL,
+                    available BOOLEAN DEFAULT TRUE,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
             """)

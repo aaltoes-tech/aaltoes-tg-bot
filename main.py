@@ -109,37 +109,22 @@ async def get_events() -> Tuple[Dict[str, Dict], bool]:
         return current_events, True
     return current_events, False
 
-async def refresh_books() -> None:
-    """Refresh books data from the database"""
-    global current_books, last_books_update
-    async with books_cache_lock:  # Use lock to prevent multiple simultaneous refreshes
-        try:
-            books = await books_repo.get_all_books(db)
-            if books:
-                current_books = books
-                last_books_update = datetime.now()
-                logging.info(f"Books refreshed at {last_books_update}")
-        except Exception as e:
-            logging.error(f"Error refreshing books: {e}")
-
 async def get_books() -> Tuple[List[Dict], bool]:
-    """
-    Get books from cache or refresh if needed
-    Returns: (books_list, was_refreshed)
-    """
+    """Get books from cache or database if cache is stale"""
     global current_books, last_books_update
     
-    # Check if cache is empty or expired
-    if not current_books or not last_books_update or datetime.now() - last_books_update > BOOKS_CACHE_DURATION:
-        # If cache is empty, refresh immediately
-        if not current_books:
-            await refresh_books()
-            return current_books, True
-        
-        # If cache is expired, refresh in background
-        asyncio.create_task(refresh_books())
-    
-    return current_books, False
+    async with books_cache_lock:
+        now = datetime.now()
+        if not current_books or not last_books_update or (now - last_books_update) > BOOKS_CACHE_DURATION:
+            try:
+                # Get fresh data from database
+                current_books = await books_repo.get_all_books(db)
+                last_books_update = now
+                return current_books, True
+            except Exception as e:
+                logging.error(f"Error refreshing books: {e}")
+                return current_books, False
+        return current_books, False
 
 @dp.message(Command("start"))
 async def command_start_handler(message: Message) -> None:
@@ -565,16 +550,24 @@ async def back_to_books_handler(callback: CallbackQuery) -> None:
     """Handle back to books button click"""
     # Get the page number from the callback data
     page = int(callback.data.split("_")[3]) if len(callback.data.split("_")) > 3 else 0
+    # Get books from cache (no refresh needed for back navigation)
+    books, _ = await get_books()
     await show_books_list(callback, page)
 
 @dp.message(Command("books"))
 async def command_books_handler(message: Message) -> None:
-    """Handler for /books command"""
+    """Handle /books command"""
+    # Refresh books if cache is stale
+    books, refreshed = await get_books()
+    if refreshed:
+        logging.info("Refreshed books cache")
     await show_books_list(message)
 
 @dp.callback_query(F.data.startswith("books_page_"))
 async def books_page_handler(callback: CallbackQuery) -> None:
-    """Handle book pagination"""
+    """Handle books pagination"""
+    # Get books from cache (no refresh needed for pagination)
+    books, _ = await get_books()
     page = int(callback.data.split("_")[2])
     await show_books_list(callback, page)
 
@@ -679,12 +672,6 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
             reply_markup=create_book_details_keyboard(book_id)
         )
 
-async def periodic_books_refresh() -> None:
-    """Periodically refresh books data"""
-    while True:
-        await asyncio.sleep(BOOKS_CACHE_DURATION.total_seconds())
-        await refresh_books()
-
 async def main() -> None:
     
     # Initialize Bot instance with default bot properties which will be passed to all API calls
@@ -700,9 +687,6 @@ async def main() -> None:
     
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
-    
-    # Start periodic books refresh
-    asyncio.create_task(periodic_books_refresh())
     
     # Start reminders checker
     asyncio.create_task(check_reminders(bot))
