@@ -460,9 +460,34 @@ async def check_reminders(bot: Bot) -> None:
             logging.error(f"Error checking reminders: {e}")
             await asyncio.sleep(60)
 
+def process_books(books: List[Dict]) -> List[Dict]:
+    """Process books to get unique titles with availability counts"""
+    unique_books = []
+    seen_titles = set()
+    
+    for book in books:
+        title = book.get('title', '').lower().strip()
+        if title and title not in seen_titles:
+            seen_titles.add(title)
+            total = 0
+            occupied = 0
+            for b in books:
+                if b.get('title', '').lower().strip() == title:
+                    total += 1
+                    if not b.get('available', True):
+                        occupied += 1
+            processed_book = {
+                'book_id': book['book_id'],
+                'title': book['title'],
+                'availability': {'total': total, 'occupied': occupied}
+            }
+            unique_books.append(processed_book)
+    
+    return unique_books
+
 async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> None:
     """Show paginated list of books"""
-    global placeholder_file_id  # Move global declaration to the top
+    global placeholder_file_id
     
     try:
         # Get books from cache
@@ -475,17 +500,10 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 await message.message.edit_text("No books available.")
             return
         
-        # Filter books to only include unique titles
-        unique_books = []
-        seen_titles = set()
+        # Process books to get unique titles with availability
+        processed_books = process_books(books)
         
-        for book in books:
-            title = book.get('title', '').lower().strip()
-            if title and title not in seen_titles:
-                seen_titles.add(title)
-                unique_books.append(book)
-        
-        if not unique_books:
+        if not processed_books:
             if isinstance(message, Message):
                 await message.answer("No unique books available.")
             else:
@@ -493,7 +511,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
             return
         
         # Create keyboard with pagination
-        reply_markup = create_books_keyboard(unique_books, page)
+        reply_markup = create_books_keyboard(processed_books, page)
         
         if isinstance(message, CallbackQuery):
             # Always edit the existing photo message

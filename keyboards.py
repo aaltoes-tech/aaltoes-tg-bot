@@ -78,6 +78,11 @@ def create_event_details_keyboard(event_id: str, has_reminder: bool = False) -> 
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
+def get_availability_emoji(occupied: int, total: int) -> str:
+    """Get the appropriate emoji based on availability"""
+    return "✅" if occupied < total else "❌"
+
 def create_books_keyboard(books: List[Dict], page: int = 0, books_per_page: int = 5) -> InlineKeyboardMarkup:
     """Create keyboard with paginated book buttons"""
     keyboard = []
@@ -88,8 +93,11 @@ def create_books_keyboard(books: List[Dict], page: int = 0, books_per_page: int 
     
     # Add book buttons for current page
     for book in books[start_idx:end_idx]:
+        # Get availability info from pre-processed book data
+        counts = book['availability']
+        availability_emoji = get_availability_emoji(counts['occupied'], counts['total'])
         keyboard.append([InlineKeyboardButton(
-            text=f"• {book['title']}",
+            text=f"{availability_emoji} ({counts['occupied']}/{counts['total']})  {book['title']}",
             callback_data=f"book_{book['book_id']}_{page}"
         )])
     
