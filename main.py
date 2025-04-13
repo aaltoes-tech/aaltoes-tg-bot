@@ -492,7 +492,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 await message.message.edit_media(
                     media=InputMediaPhoto(
                         media=current_photo,
-                        caption=f"Welcome to Aaltoes Library! (Page {page + 1})"
+                        caption=f"Welcome to Aaltoes Library!"
                     ),
                     reply_markup=reply_markup
                 )
@@ -501,7 +501,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 photo = FSInputFile("images/books_placeholder.png")
                 sent_message = await message.message.answer_photo(
                     photo=photo,
-                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
+                    caption=f"Welcome to Aaltoes Library!",
                     reply_markup=reply_markup
                 )
                 # Store the file_id for future use
@@ -514,7 +514,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 # Use cached file_id
                 await message.answer_photo(
                     photo=placeholder_file_id,
-                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
+                    caption=f"Welcome to Aaltoes Library!",
                     reply_markup=reply_markup
                 )
             else:
@@ -522,7 +522,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 photo = FSInputFile("images/books_placeholder.png")
                 sent_message = await message.answer_photo(
                     photo=photo,
-                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
+                    caption=f"Welcome to Aaltoes Library!",
                     reply_markup=reply_markup
                 )
                 # Store the file_id for future use
@@ -856,7 +856,7 @@ async def return_to_books_handler(callback: CallbackQuery) -> None:
             await callback.message.edit_media(
                 media=InputMediaPhoto(
                     media=placeholder_file_id,
-                    caption=f"Welcome to Aaltoes Library! (Page {page + 1})"
+                    caption=f"Welcome to Aaltoes Library!"
                 ),
                 reply_markup=create_books_keyboard(books, page)
             )
@@ -865,7 +865,7 @@ async def return_to_books_handler(callback: CallbackQuery) -> None:
             photo = FSInputFile("images/books_placeholder.png")
             sent_message = await callback.message.answer_photo(
                 photo=photo,
-                caption=f"Welcome to Aaltoes Library! (Page {page + 1})",
+                caption=f"Welcome to Aaltoes Library!",
                 reply_markup=create_books_keyboard(books, page)
             )
             # Store the file_id for future use
