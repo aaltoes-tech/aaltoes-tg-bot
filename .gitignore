@@ -1,8 +1,0 @@
-.gitignore
-.DS_Store
-images/books_images/
-images/books_placeholder.png
-books.csv
-.env
-.venv/
-__pycache__/
