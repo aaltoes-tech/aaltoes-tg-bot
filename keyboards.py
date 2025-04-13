@@ -138,7 +138,7 @@ def create_book_details_keyboard(book_id: int, current_page: int, available_inst
         keyboard.append([
             InlineKeyboardButton(
                 text="📚 Borrow a Copy",
-                callback_data=f"book_instance_select_{book_id}"
+                callback_data=f"book_instance_select_{book_id}_{current_page}"
             )
         ])
     

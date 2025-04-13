@@ -541,7 +541,7 @@ async def book_instance_select_handler(callback: CallbackQuery) -> None:
     logging.info(f"Received instance selection callback: {callback.data}")
     try:
         # Extract book ID from callback data
-        book_id = int(callback.data.split("_")[-1])
+        book_id = int(callback.data.split("_")[3])
         logging.info(f"Handling instance selection for book {book_id}")
         
         # Get book details and instances
@@ -576,12 +576,14 @@ async def book_instance_select_handler(callback: CallbackQuery) -> None:
                     callback_data=f"book_instance_{instance['instance_id']}_{book_id}"
                 )
             ])
+        
+        current_page = callback.data.split("_")[-1]
             
         # Add back button
         keyboard.append([
             InlineKeyboardButton(
                 text="⬅️ Back to Book",
-                callback_data=f"book_{book_id}_0"  # Added page number for back navigation
+                callback_data=f"book_{book_id}_{current_page}"  # Added page number for back navigation
             )
         ])
         
