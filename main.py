@@ -135,20 +135,28 @@ async def command_start_handler(message: Message) -> None:
 
     welcome_message = (
         f"👋 Hello, {html.bold(message.from_user.full_name)}!\n\n"
-        f"Welcome to the Aaltoes Community Bot! 📚\n\n"
-        f"Here's what you can do:\n\n"
-        f"📚 Book Management:\n"
-        f"- /books - Browse available books\n"
-        f"- /borrow - Borrow a book\n"
-        f"- /return - Return a book\n"
-        f"- /borrowings - View your current borrowings\n"
-        f"- /history - View your borrowing history\n\n"
-        f"📅 Events:\n"
-        f"- /events - View upcoming events\n"
-        f"- /reminders - View your event reminders\n\n"
+        f"Welcome to the Aaltoes Community Bot! \n\n"
+        f"Type /help to see all available commands!"
     )
 
     await message.answer(welcome_message)
+
+@dp.message(Command("help"))
+async def command_help_handler(message: Message) -> None:
+    """
+    This handler receives messages with `/help` command
+    """
+    help_message = "List of available commands:\n\n"
+    help_message += "/info - Show information about Aaltoes\n"
+    help_message += "/events - Show upcoming events\n"
+    help_message += "/reminders - Show your event reminders\n"
+    help_message += "/books - Show available books\n"
+    help_message += "/borrow - Borrow a book\n"
+    help_message += "/return - Return a book\n"
+    help_message += "/borrowings - Show your borrowings\n"
+    help_message += "/history - Show your borrowing history\n"
+
+    await message.answer(help_message)
 
 @dp.message(Command("info"))
 async def command_info_handler(message: Message) -> None:
@@ -239,7 +247,7 @@ async def command_refresh_handler(message: Message) -> None:
     Only admins can use this command
     """
 
-    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    user = await user_repo.get_user(message.from_user.id)
     if user['role'] != 'admin':
         await message.answer("You are not authorized to use this command.")
     else:
@@ -757,7 +765,7 @@ async def command_borrowings_handler(message: Message) -> None:
 @dp.message(Command("admin"))
 async def command_admin_handler(message: Message) -> None:
     """Handle /admin command"""
-    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    user = await user_repo.get_user(message.from_user.id)
     if user['role'] != 'admin':
         await message.answer("You are not authorized to use this command.")
     else:
@@ -915,7 +923,7 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
 
 @dp.message(Command("refresh_books"))   
 async def command_refresh_books_handler(message: Message) -> None:
-    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    user = await user_repo.get_user(message.from_user.id)
     if user['role'] != 'admin':
         await message.answer("You are not authorized to use this command.")
     else:
@@ -925,7 +933,7 @@ async def command_refresh_books_handler(message: Message) -> None:
 @dp.message(Command("check"))
 async def command_check_handler(message: Message) -> None:
     """Handle /check command"""
-    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    user = await user_repo.get_user(message.from_user.id)
     if user['role'] != 'admin':
         await message.answer("You are not authorized to use this command.")
     else:
@@ -1012,6 +1020,22 @@ async def state_borrowing_handler(callback: CallbackQuery, bot: Bot) -> None:
     else:
         await callback.message.edit_text("No pending borrowings")
 
+@dp.message(Command("about"))
+async def command_about_handler(message: Message) -> None:
+    """Handle /about command"""
+    about_message = (
+        "🤖 *Aaltoes Library Bot*\n\n"
+        "A Telegram bot for managing the Aaltoes library. "
+        "Borrow and return books, check your borrowings, and stay updated with upcoming events.\n\n"
+        "📚 *Features:*\n"
+        "- Browse and borrow books\n"
+        "- Manage your borrowings\n"
+        "- Get event reminders\n"
+        "- Easy book returns\n\n"
+        "Type /help to see all available commands!"
+    )
+    
+    await message.answer(about_message, parse_mode=ParseMode.MARKDOWN)
 
 async def main() -> None:
     
