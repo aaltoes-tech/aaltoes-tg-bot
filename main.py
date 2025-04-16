@@ -685,11 +685,8 @@ async def command_books_handler(message: Message) -> None:
 async def command_borrowings_handler(message: Message) -> None:
     """Handle /borrowings command"""
     borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
-    if not borrowings:
-        await message.answer("You have no borrowings.")
-        return
     
-    text = f"You have {len(borrowings)} borrowings. Press /return to return the book\n------------------------------\n"
+    text = f"You have {len(borrowings)} active borrowings. Press /return to return the book\n------------------------------\n"
 
     for borrowing in borrowings:
         logging.info(f"Processing borrowing: {borrowing}")
@@ -778,7 +775,7 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
             f"📚 {borrowing['title']}\n"
             f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
             f"📖 Copy #{instance_id}\n\n"
-            f"Thank you for returning the book!"
+            f"Thank you for returning the book! We will check it and approve the return soon."
         )
         
         await message.answer(success_message)
