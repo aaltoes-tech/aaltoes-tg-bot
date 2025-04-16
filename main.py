@@ -745,10 +745,10 @@ async def command_borrowings_handler(message: Message) -> None:
     """Handle /borrowings command"""
     borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
     
-    text = f"You have {len(borrowings)} active borrowings."
+    text = f"You have {len(borrowings)} active borrowings. "
 
     if len(borrowings) > 0:    
-        text += "Press /return to return the book\n------------------------------\n"
+        text += "Press /return to return the book\nPress /borrowings to see your borrowings\n------------------------------\n"
 
     for borrowing in borrowings:
         logging.info(f"Processing borrowing: {borrowing}")
