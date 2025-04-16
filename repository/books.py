@@ -1,4 +1,3 @@
-import pandas as pd
 import os
 from db import db
 import logging
@@ -13,6 +12,8 @@ class BooksRepository:
     async def init(self, db) -> None:
         """Initialize books and books_instances tables"""
         try:
+            logging.info("Starting table initialization...")
+            
             # Create books table
             await db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.table_name} (
@@ -24,6 +25,7 @@ class BooksRepository:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            logging.info(f"Created/verified {self.table_name} table")
             
             # Create books_instances table
             await db.execute(f"""
@@ -35,10 +37,23 @@ class BooksRepository:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            logging.info(f"Created/verified {self.instances_table_name} table")
             
-            logging.info(f"Tables {self.table_name} and {self.instances_table_name} initialized successfully")
+            # Create book_image_cache table
+            await db.execute(f"""
+                CREATE TABLE IF NOT EXISTS instance_image_cache (
+                    instance_id INTEGER PRIMARY KEY REFERENCES {self.instances_table_name}(instance_id),
+                    file_id TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            logging.info("Created/verified instance_image_cache table")
+            
+            logging.info(f"All tables initialized successfully")
         except Exception as e:
             logging.error(f"Error initializing tables: {e}")
+            logging.error(f"Error type: {type(e)}")
+            logging.error(f"Error details: {str(e)}")
             raise
 
     async def get_all_books(self, db) -> List[Dict]:
@@ -126,78 +141,21 @@ class BooksRepository:
             logging.error(f"Error getting book by ID: {e}")
             return None
 
-    async def save_book(self, db, book_data: Dict) -> None:
-        """Save a book to the database"""
-        try:
-            # Handle all fields as optional with proper type conversion
-            book_id = None
-            if 'book_id' in book_data and not pd.isna(book_data['book_id']):
-                try:
-                    book_id = int(book_data['book_id'])
-                except (ValueError, TypeError):
-                    book_id = None
-
-            author = None
-            if 'author' in book_data and not pd.isna(book_data['author']):
-                author = str(book_data['author']).strip()
-                if not author:  # Empty string after strip
-                    author = None
-
-            year = None
-            if 'year' in book_data and not pd.isna(book_data['year']):
-                try:
-                    year = int(book_data['year'])
-                except (ValueError, TypeError):
-                    year = None
-
-            title = None
-            if 'title' in book_data and not pd.isna(book_data['title']):
-                title = str(book_data['title']).strip()
-                if not title:  # Empty string after strip
-                    title = None
-
-            description = None
-            if 'description' in book_data and not pd.isna(book_data['description']):
-                description = str(book_data['description']).strip()
-                if not description:  # Empty string after strip
-                    description = None
-
-            # Insert book and get the book_id
-            result = await db.execute(f"""
-                INSERT INTO {self.table_name} (title, author, year, description)
-                VALUES ($1, $2, $3, $4)
-                RETURNING book_id
-            """, title, author, year, description)
-            
-            book_id = result[0]['book_id']
-
-            # Handle image path for instance
-            if 'image' in book_data and not pd.isna(book_data['image']):
-                image = str(book_data['image']).strip()
-                if image:
-                    # Convert to absolute path
-                    image = os.path.abspath(os.path.join('books/books_images', image))
-                    # Check if file exists
-                    if not os.path.exists(image):
-                        logging.warning(f"Image file not found: {image}")
-                        image = None
-                    
-                    if image:
-                        # Insert instance with image
-                        await db.execute(f"""
-                            INSERT INTO {self.instances_table_name} (book_id, image)
-                            VALUES ($1, $2)
-                        """, book_id, image)
-        except Exception as e:
-            logging.error(f"Error saving book: {e}")
-            logging.error(f"Book data: {book_data}")
 
     async def delete_book(self, db, book_id: int) -> None:
         """Delete a book from the database"""
         try:
             await db.execute(f"DELETE FROM {self.table_name} WHERE book_id = $1", book_id)
+            await db.execute(f"DELETE FROM {self.instances_table_name} WHERE book_id = $1", book_id)
         except Exception as e:
             logging.error(f"Error deleting book: {e}")
+    
+    async def delete_instance(self, db, instance_id: int) -> None:
+        """Delete an instance from the database"""
+        try:
+            await db.execute(f"DELETE FROM {self.instances_table_name} WHERE instance_id = $1", instance_id)
+        except Exception as e:
+            logging.error(f"Error deleting instance: {e}")
 
     async def search_books(self, db, query: str) -> List[Dict]:
         """Search books by title or author"""
@@ -263,6 +221,13 @@ class BooksRepository:
         except Exception as e:
             logging.error(f"Error getting instance by ID: {e}")
             return None
+    async def get_all_instances(self, db) -> List[Dict]:
+        """Get all instances of all books"""
+        try:
+            return await db.fetch("SELECT * FROM books_instances")
+        except Exception as e:
+            logging.error(f"Error getting all instances: {e}")
+            return []
     
 
     async def update_book_availability(self, db, instance_id: int, available: bool) -> None:
@@ -280,59 +245,75 @@ class BooksRepository:
     async def upload_books_from_csv(self, db, csv_path="books.csv", instances_csv_path="books_instances.csv"):
         """Upload books from CSV files to database"""
         try:
-            # Read books CSV file
-            books_df = pd.read_csv(csv_path)
+            import csv
             
-            # Insert books
-            for _, row in books_df.iterrows():
-                # Handle author field which can be NaN
-                author = None
-                if not pd.isna(row['author']):
-                    author = str(row['author']).strip()
-                    if not author:  # Empty string after strip
-                        author = None
+            # Read books CSV file
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                books_reader = csv.DictReader(f)
                 
-                # Handle year field which can be NaN
-                year = None
-                if not pd.isna(row['year']):
-                    try:
-                        year = int(row['year'])
-                    except (ValueError, TypeError):
-                        year = None
-                
-                # Handle description field which can be NaN
-                description = None
-                if not pd.isna(row['description']):
-                    description = str(row['description']).strip()
-                    if not description:  # Empty string after strip
-                        description = None
-                
-                # Insert book
-                await db.execute(f"""
-                    INSERT INTO {self.table_name} (book_id, title, author, year, description)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, int(row['book_id']), str(row['title']), author, year, description)
+                # Insert books
+                for row in books_reader:
+                    # Handle author field which can be empty
+                    author = row['author'].strip() if row['author'] else None
+                    
+                    # Handle year field which can be empty
+                    year = None
+                    if row['year']:
+                        try:
+                            year = int(row['year'])
+                        except (ValueError, TypeError):
+                            year = None
+                    
+                    # Handle description field which can be empty
+                    description = row['description'].strip() if row['description'] else None
+                    
+                    # Insert book
+                    await db.execute(f"""
+                        INSERT INTO {self.table_name} (book_id, title, author, year, description)
+                        VALUES ($1, $2, $3, $4, $5)
+                    """, int(row['book_id']), row['title'], author, year, description)
             
             # Read instances CSV file
-            instances_df = pd.read_csv(instances_csv_path)
-            
-            # Insert instances
-            for _, row in instances_df.iterrows():
-                # Convert instance_id and book_id to integers
-                instance_id = int(row['instance_id'])
-                book_id = int(row['book_id'])
+            with open(instances_csv_path, 'r', encoding='utf-8') as f:
+                instances_reader = csv.DictReader(f)
                 
-                # Insert instance
-                await db.execute(f"""
-                    INSERT INTO {self.instances_table_name} (instance_id, book_id, image)
-                    VALUES ($1, $2, $3)
-                """, instance_id, book_id, str(row['image']))
+                # Insert instances
+                for row in instances_reader:
+                    # Convert instance_id and book_id to integers
+                    instance_id = int(row['instance_id'])
+                    book_id = int(row['book_id'])
+                    
+                    # Insert instance
+                    await db.execute(f"""
+                        INSERT INTO {self.instances_table_name} (instance_id, book_id, image)
+                        VALUES ($1, $2, $3)
+                    """, instance_id, book_id, row['image'])
             
-            logging.info(f"Successfully uploaded {len(books_df)} books and {len(instances_df)} instances to database")
+            logging.info(f"Successfully uploaded books and instances to database")
             
         except Exception as e:
             logging.error(f"Error uploading books: {str(e)}")
             raise
+
+    async def get_file_id(self, db, instance_id: int) -> str | None:
+        """Get cached file_id for a book"""
+        result = await db.fetchrow(
+            "SELECT file_id FROM instance_image_cache WHERE instance_id = $1",
+            instance_id
+        )
+        return result['file_id'] if result else None
+
+    async def save_file_id(self, db, instance_id: int, file_id: str) -> None:
+        """Save file_id for a book"""
+        await db.execute(
+            """
+            INSERT INTO instance_image_cache (instance_id, file_id)
+            VALUES ($1, $2)
+            ON CONFLICT (instance_id) DO UPDATE
+            SET file_id = $2, updated_at = CURRENT_TIMESTAMP
+            """,
+            instance_id, file_id
+        )
 
 async def get_books_by_author(author: str):
     """Get books by author"""

@@ -79,7 +79,20 @@ pending_borrowings: List[Dict] = []
 current_books: List[Dict] = []
 
 placeholder_file_id: str = None
-book_images_cache: Dict[int, str] = {}
+placeholder_file_id_2: str = None
+
+# Use Pinata's image optimization with reduced size (300px width) and WebP format
+placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiascr7ud4fbujy2d26s6jtqf33pur24rlkmaym7av35zzbjai2oci?img-width=300&img-quality=60&img-format=webp'
+placeholder_file_2_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafkreiberkd4tzafmhmsepnwbtw32ois4b4enfvcl23hoo6bbkhrmz2moe?img-width=300&img-quality=60&img-format=webp'
+
+def get_optimized_image_url(ipfs_url: str) -> str:
+    """Get optimized image URL from Pinata IPFS URL"""
+    if not ipfs_url or not ipfs_url.startswith('https://'):
+        return ipfs_url
+    # Add optimization parameters if not already present
+    if '?img-width=' not in ipfs_url:
+        return f"{ipfs_url}?img-width=500&img-quality=80&img-format=webp"
+    return ipfs_url
 
 class BorrowState(StatesGroup):
     SELECT_INSTANCE = State()  # Only need this state for direct instance input
@@ -392,10 +405,9 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                     reply_markup=reply_markup
                 )
             else:
-                # First time sending the image
-                photo = FSInputFile("images/books_placeholder.png")
+                # First time sending the image - use optimized URL
                 sent_message = await message.message.answer_photo(
-                    photo=photo,
+                    photo=get_optimized_image_url(placeholder_file_1_url),
                     caption=f"Welcome to Aaltoes Library!",
                     reply_markup=reply_markup
                 )
@@ -413,10 +425,9 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                     reply_markup=reply_markup
                 )
             else:
-                # First time sending the image
-                photo = FSInputFile("images/books_placeholder.png")
+                # First time sending the image - use optimized URL
                 sent_message = await message.answer_photo(
-                    photo=photo,
+                    photo=get_optimized_image_url(placeholder_file_1_url),
                     caption=f"Welcome to Aaltoes Library!",
                     reply_markup=reply_markup
                 )
@@ -576,10 +587,9 @@ async def books_page_handler(callback: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("book_"))
 async def book_callback_handler(callback: CallbackQuery) -> None:
     """Handle book button clicks"""
-        
-    
+    global placeholder_file_id_2
+
     parts = callback.data.split("_")
-    logging.info(f"Received book callback: {parts}")
     book_id = int(parts[1])
     current_page = int(parts[2]) if len(parts) > 2 else 0
     
@@ -589,6 +599,7 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
     
     # Get book instances
     instances = await books_repo.get_book_instances(db, book_id)
+    instance_id = instances[0]['instance_id']
     
     # Build message text with optional fields
     message_text = f"📚 *{book.get('title', 'No title available')}*\n\n"
@@ -607,35 +618,72 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
     if book.get('description'):
         message_text += f"{book['description']}\n\n"
 
-    image_path = None
-    if instances and instances[0].get('image'):
-        image_path = instances[0]['image']
-    
-        if book_id in book_images_cache:
+    try:
+        file_id = await books_repo.get_file_id(db, instance_id)
+            
+        if file_id:
             # Use cached file_id
             await callback.message.edit_media(
                 media=InputMediaPhoto(
-                    media=book_images_cache[book_id],
+                    media=file_id,
                     caption=message_text,
                     parse_mode=ParseMode.MARKDOWN
                 ),
                 reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
             )
         else:
-            # First time sending this image
-            photo = FSInputFile(image_path)
-            sent_message = await callback.message.edit_media(
-                media=InputMediaPhoto(
-                    media=photo,
-                    caption=message_text,
-                    parse_mode=ParseMode.MARKDOWN
-                ),
+            # Try to use the image URL from the instance
+            image_path = None
+            if instances and instances[0].get('image'):
+                image_path = instances[0]['image']
+                if image_path.startswith('https://'):
+                    # First time sending this image - use optimized URL
+                    sent_message = await callback.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=get_optimized_image_url(image_path),
+                            caption=message_text,
+                            parse_mode=ParseMode.MARKDOWN
+                        ),
+                        reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+                    )
+                    # Store the file_id in both memory and database
+                    file_id = sent_message.photo[-1].file_id
+                    await books_repo.save_file_id(db, instance_id, file_id)
+                else:
+                    raise Exception("Invalid image path")
+            else:
+                raise Exception("No image available")
+    except Exception as e:
+        logging.error(f"Error handling book image: {e}")
+        try:
+            if placeholder_file_id_2:
+                # Use cached placeholder
+                await callback.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=placeholder_file_id_2,
+                        caption=message_text,
+                        parse_mode=ParseMode.MARKDOWN
+                    ),
+                    reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+                )
+            else:
+                # First time sending placeholder - use optimized URL
+                sent_message = await callback.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=get_optimized_image_url(placeholder_file_2_url),
+                        caption=message_text,
+                        parse_mode=ParseMode.MARKDOWN
+                    ),
+                    reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+                )
+                placeholder_file_id_2 = sent_message.photo[-1].file_id
+        except Exception as e2:
+            logging.error(f"Error handling placeholder image: {e2}")
+            await callback.message.edit_text(
+                text=message_text,
+                parse_mode=ParseMode.MARKDOWN,
                 reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
             )
-            # Store the file_id for future use
-            book_images_cache[book_id] = sent_message.photo[-1].file_id
-
-
 
 @dp.message(Command("books"))
 async def command_books_handler(message: Message) -> None:
@@ -924,6 +972,7 @@ async def state_borrowing_handler(callback: CallbackQuery, bot: Bot) -> None:
     else:
         await callback.message.edit_text("No pending borrowings")
 
+
 async def main() -> None:
     
     # Initialize Bot instance with default bot properties which will be passed to all API calls
@@ -935,6 +984,7 @@ async def main() -> None:
     await reminders_repo.init(db)
     await books_repo.init(db)
     await borrowings_repo.init(db)
+    
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
     
