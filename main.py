@@ -852,7 +852,7 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
         await borrowings_repo.update_borrowing_state(db, borrowing['borrow_id'], 'pending')
 
         success_message = (
-            f"✅ Successfully returned\n\n"
+            f"✅  Return request sent\n\n"
             f"📚 {borrowing['title']}\n"
             f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
             f"📖 Copy #{instance_id}\n\n"
