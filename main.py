@@ -57,6 +57,17 @@ def format_event_time(event: Dict[str, Any]) -> str:
         # Fallback to simple formatting if there's an error
         return event['start_time'].strftime('%d %b %Y, %H:%M')
 
+def format_datetime(dt: datetime) -> str:
+    """Format datetime in a consistent, readable way"""
+    if not dt:
+        return "N/A"
+    # Convert to Helsinki timezone if not already in it
+    helsinki_tz = pytz.timezone('Europe/Helsinki')
+    if dt.tzinfo is None:
+        dt = pytz.UTC.localize(dt)
+    local_dt = dt.astimezone(helsinki_tz)
+    return local_dt.strftime('%d %b %Y, %H:%M')
+
 # Initialize repositories
 user_repo = UserRepository()
 events_repo = EventsRepository(api_key=settings.LUMA_API_KEY)
@@ -739,13 +750,12 @@ async def command_borrowings_handler(message: Message) -> None:
     if len(borrowings) > 0:    
         text += "Press /return to return the book\n------------------------------\n"
 
-
     for borrowing in borrowings:
         logging.info(f"Processing borrowing: {borrowing}")
         text += f"📚 {borrowing['title']}\n"
         text += f"👤 Author: {borrowing['author']}\n"
         text += f"🖼️ Copy #{borrowing['instance_id']}\n"
-        text += f"Return by: {borrowing['borrow_return_time']}\n"
+        text += f"📅 Return by: {format_datetime(borrowing['borrow_return_time'])}\n"
         text += f"State: "
         if borrowing['state'] == 'overdue':
             text += "❌ Overdue\n"
@@ -797,7 +807,7 @@ async def command_history_handler(message: Message) -> None:
         return
     text = f"Your borrowing history:\n"
     for i, borrowing in enumerate(borrowings):
-        text+=f"{i+1}. Time: {borrowing['borrow_time']}, "
+        text+=f"{i+1}. Time: {format_datetime(borrowing['borrow_time'])}, "
         text+=f"Copy #{borrowing['instance_id']}\n"
     await message.answer(text)
 @dp.message(Command("return"))
@@ -995,17 +1005,16 @@ async def pending_page_handler(callback: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("pending_borrowing_"))
 async def pending_borrowing_handler(callback: CallbackQuery) -> None:
     """Handle pending borrowing button clicks"""
-
-    borrowing_id = int(callback.data.split("_")[2])  # Convert to integer
+    borrowing_id = int(callback.data.split("_")[2])
     page = int(callback.data.split("_")[3])
     borrowing = await borrowings_repo.get_borrowing_by_id(db, borrowing_id)
     text = f"📚 {borrowing['title']}\n"
     text += f"👤 Author: {borrowing['author']}\n"
     text += f"📖 Copy #{borrowing['instance_id']}\n"
-    text += f"📅 Returned at: {borrowing['borrow_return_time']}\n"
+    text += f"📅 Returned at: {format_datetime(borrowing['borrow_return_time'])}\n"
     text += f"Borrowed by: @{borrowing['username']}\n"
 
-    await callback.message.edit_text(text, reply_markup= create_approve_borrowing_keyboard(borrowing_id, page))
+    await callback.message.edit_text(text, reply_markup=create_approve_borrowing_keyboard(borrowing_id, page))
 
 
 @dp.callback_query(F.data.startswith("state_borrowing_"))
