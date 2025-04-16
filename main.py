@@ -82,8 +82,8 @@ placeholder_file_id: str = None
 placeholder_file_id_2: str = None
 
 # Use Pinata's image optimization with reduced size (300px width) and WebP format
-placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiascr7ud4fbujy2d26s6jtqf33pur24rlkmaym7av35zzbjai2oci?img-width=300&img-quality=60&img-format=webp'
-placeholder_file_2_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafkreiberkd4tzafmhmsepnwbtw32ois4b4enfvcl23hoo6bbkhrmz2moe?img-width=300&img-quality=60&img-format=webp'
+placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiawgmucvhow67n6xclzly2zxb6hgchwgacgljdh6iprzzwlebkwqe?img-width=500&img-quality=80&img-format=webp'
+placeholder_file_2_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafkreiberkd4tzafmhmsepnwbtw32ois4b4enfvcl23hoo6bbkhrmz2moe?img-width=500&img-quality=80&img-format=webp'
 
 def get_optimized_image_url(ipfs_url: str) -> str:
     """Get optimized image URL from Pinata IPFS URL"""
@@ -432,8 +432,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
 
         if isinstance(message, CallbackQuery):
             # Get the current photo file_id
-            current_photo = message.message.photo[-1].file_id if message.message.photo else placeholder_file_id
-            
+        
             if placeholder_file_id:
                 # Edit the existing photo message
                 await message.message.edit_media(
@@ -445,10 +444,12 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 )
             else:
                 # First time sending the image - use optimized URL
-                sent_message = await message.message.answer_photo(
-                    photo=get_optimized_image_url(placeholder_file_1_url),
-                    caption=f"Welcome to Aaltoes Library!",
-                    reply_markup=reply_markup
+                sent_message = await message.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=get_optimized_image_url(placeholder_file_1_url),
+                        caption=f"Welcome to Aaltoes Library!",
+                        reply_markup=reply_markup
+                    )
                 )
                 # Store the file_id for future use
                 placeholder_file_id = sent_message.photo[-1].file_id
