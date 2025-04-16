@@ -83,7 +83,7 @@ def get_availability_emoji(occupied: int, total: int) -> str:
     """Get the appropriate emoji based on availability"""
     return "✅" if occupied < total else "❌"
 
-def create_books_keyboard(books: List[Dict], current_page: int = 0, books_per_page: int = 10) -> InlineKeyboardMarkup:
+def create_books_keyboard(books: List[Dict], current_page: int = 0, books_per_page: int = 5) -> InlineKeyboardMarkup:
     """Create keyboard for books list with pagination"""
     keyboard = []
     
