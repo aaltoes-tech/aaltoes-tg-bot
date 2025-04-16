@@ -212,10 +212,10 @@ class BooksRepository:
     async def get_instance_by_id(self, db, instance_id: int) -> Dict:
         """Get an instance by ID"""
         try:
-            query = """
+            query = f"""
                 SELECT bi.*, b.title, b.author, b.year, b.description
-                FROM book_instances bi
-                JOIN books b ON bi.book_id = b.book_id
+                FROM {self.instances_table_name} bi
+                JOIN {self.table_name} b ON bi.book_id = b.book_id
                 WHERE bi.instance_id = $1
             """
             result = await db.fetchrow(query, instance_id)
