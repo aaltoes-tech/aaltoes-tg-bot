@@ -2,7 +2,7 @@ import asyncio
 import logging
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Union
 
 import pytz
 
@@ -78,8 +78,9 @@ pending_borrowings: List[Dict] = []
 
 current_books: List[Dict] = []
 
-placeholder_file_id: str = None
-placeholder_file_id_2: str = None
+# Global variables to store the placeholder file_ids
+placeholder_file_id = None  # For main books list
+placeholder_file_id_2 = None  # For individual book details
 
 # Use Pinata's image optimization with reduced size (300px width) and WebP format
 placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiawgmucvhow67n6xclzly2zxb6hgchwgacgljdh6iprzzwlebkwqe?img-width=500&img-quality=80&img-format=webp'
@@ -412,9 +413,9 @@ async def check_reminders(bot: Bot) -> None:
             logging.error(f"Reminders: {reminders}")
             await asyncio.sleep(60)
 
-async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> None:
-    """Show paginated list of books"""
-    global placeholder_file_id
+async def show_books_list(message: Union[Message, CallbackQuery], page: int = 0) -> None:
+    """Show list of books with pagination"""
+    global placeholder_file_id  # Access the global variable
     
     try:
         # Get books from cache
@@ -432,7 +433,6 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
 
         if isinstance(message, CallbackQuery):
             # Get the current photo file_id
-        
             if placeholder_file_id:
                 # Edit the existing photo message
                 await message.message.edit_media(
@@ -447,13 +447,13 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 sent_message = await message.message.edit_media(
                     media=InputMediaPhoto(
                         media=get_optimized_image_url(placeholder_file_1_url),
-                        caption=f"Welcome to Aaltoes Library!",
-                        reply_markup=reply_markup
-                    )
+                        caption=f"Welcome to Aaltoes Library!"
+                    ),
+                    reply_markup=reply_markup
                 )
                 # Store the file_id for future use
                 placeholder_file_id = sent_message.photo[-1].file_id
-                await message.delete()
+                
         else:
             # If it's a new message, send a photo message
             if placeholder_file_id:
@@ -472,7 +472,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 )
                 # Store the file_id for future use
                 placeholder_file_id = sent_message.photo[-1].file_id
-                await message.delete()
+                
             
     except Exception as e:
         logging.error(f"Error in show_books_list: {e}")
@@ -627,7 +627,7 @@ async def books_page_handler(callback: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("book_"))
 async def book_callback_handler(callback: CallbackQuery) -> None:
     """Handle book button clicks"""
-    global placeholder_file_id_2
+    global placeholder_file_id_2  # Use the second placeholder for book details
 
     parts = callback.data.split("_")
     book_id = int(parts[1])
@@ -669,8 +669,6 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
             reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
         )
     except Exception as e:
-
-
         try:    
             image_path = instances[0]['image']
             sent_message = await callback.message.edit_media(
@@ -681,7 +679,7 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
             ),
             reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
         )
-                    # Store the file_id in both memory and database
+            # Store the file_id in both memory and database
             file_id = sent_message.photo[-1].file_id
             await books_repo.save_file_id(db, instance_id, file_id)
         except Exception as e:
