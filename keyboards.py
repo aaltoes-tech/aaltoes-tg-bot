@@ -83,7 +83,7 @@ def get_availability_emoji(occupied: int, total: int) -> str:
     """Get the appropriate emoji based on availability"""
     return "✅" if occupied < total else "❌"
 
-def create_books_keyboard(books: List[Dict], current_page: int = 0, books_per_page: int = 5) -> InlineKeyboardMarkup:
+def create_books_keyboard(books: List[Dict], current_page: int = 0, books_per_page: int = 10) -> InlineKeyboardMarkup:
     """Create keyboard for books list with pagination"""
     keyboard = []
     
@@ -138,7 +138,7 @@ def create_book_details_keyboard(book_id: int, current_page: int, available_inst
         keyboard.append([
             InlineKeyboardButton(
                 text="📚 Borrow a Copy",
-                callback_data=f"book_instance_select_{book_id}_{current_page}"
+                callback_data=f"instance_select_{book_id}_{current_page}"
             )
         ])
     
@@ -146,26 +146,29 @@ def create_book_details_keyboard(book_id: int, current_page: int, available_inst
     keyboard.append([
         InlineKeyboardButton(
             text="⬅️ Back to Books",
-            callback_data=f"return_to_books_{current_page}"
+            callback_data=f"books_page_{current_page}"
         )
     ])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def create_instance_selection_keyboard(instances: List[Dict], book_id: int) -> InlineKeyboardMarkup:
+
+def create_instance_selection_keyboard(instances: List[Dict], book_id: int, current_page: int) -> InlineKeyboardMarkup:
     """Create keyboard for instance selection"""
     keyboard = []
     for instance in instances:
         if instance['available']:
             keyboard.append([InlineKeyboardButton(
                 text=f"Copy #{instance['instance_id']}",
-                callback_data=f"book_instance_{instance['instance_id']}_{book_id}"
+                callback_data=f"instance_{instance['instance_id']}_{book_id}"
             )])
-    
-    # Add Back button
-    keyboard.append([InlineKeyboardButton(
-        text="Back to Book Details",
-        callback_data=f"back_to_book_{book_id}"
-    )])
-    
-    return InlineKeyboardMarkup(inline_keyboard=keyboard) 
+
+        # Add back button
+    keyboard.append([
+        InlineKeyboardButton(
+            text="⬅️ Back to Book",
+            callback_data=f"book_{book_id}_{current_page}"  # Added page number for back navigation
+        )
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
