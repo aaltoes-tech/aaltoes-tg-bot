@@ -893,21 +893,16 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         # Get instance details
         instance = await books_repo.get_instance_by_id(db, instance_id)
         if not instance:
-            await message.answer("❌ Instance not found")
+            await message.answer("❌ Instance not found", show_alert=True)
             await state.clear()
             return
             
         if not instance['available']:
-            await message.answer("❌ This copy is not available")
+            await message.answer("❌ This copy is not available", show_alert=True)
             await state.clear()
             return
-            
-        # Get book details
-        book = await books_repo.get_book_by_id(db, instance['book_id'])
-        if not book:
-            await message.answer("❌ Book not found")
-            await state.clear()
-            return
+        
+        # Check if user has already borrowed this book
         
         # Create borrowing record
         borrow_id = await borrowings_repo.create_borrowing(db, message.from_user.id, instance_id)
@@ -915,19 +910,23 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         # Update instance availability
         await books_repo.update_book_availability(db, instance_id, False)
         
+        # Get book details for success message
+        books = await get_books(force_refresh=True)  # Refresh to get updated availability
+        book = next((b for b in books if b['book_id'] == instance['book_id']), None)
+        
         # Get borrowing details
         borrowing = await borrowings_repo.get_borrowing_by_instance(db, instance_id)
         return_time = borrowing['borrow_return_time'].strftime('%d %b %Y')
         
         success_message = (
             f"✅ Successfully borrowed\n\n"
-            f"📚 {borrowing['title']}\n"
-            f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
+            f"📚 {book['title']}\n"
+            f"👤 Author: {book.get('author', 'Unknown')}\n"
             f"📖 Copy #{instance_id}\n"
             f"📅 Return by: {return_time}\n\n"
-            f"Back to library /books\n"
-            f"Check your borrowings /borrowings"
+            f"Back to library /books"
         )
+    
         
         await message.answer(
             success_message,
