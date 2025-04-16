@@ -921,8 +921,8 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         
         success_message = (
             f"✅ Successfully borrowed\n\n"
-            f"📚 {book['title']}\n"
-            f"👤 Author: {book.get('author', 'Unknown')}\n"
+            f"📚 {borrowing['title']}\n"
+            f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
             f"📖 Copy #{instance_id}\n"
             f"📅 Return by: {return_time}\n\n"
             f"Back to library /books\n"
