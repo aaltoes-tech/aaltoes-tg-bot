@@ -228,9 +228,11 @@ def create_approve_borrowing_keyboard(borrowing_id: str, page: int) -> InlineKey
 
 def create_return_keyboard(borrowings: List[Dict]) -> ReplyKeyboardMarkup:
     """Create keyboard for returning a book"""
-    keyboard = [[]]  # Start with one row
+    keyboard = []
     for borrowing in borrowings:
-        keyboard[0].append(KeyboardButton(text=f"Copy #{borrowing['instance_id']}"))
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+        keyboard.append([KeyboardButton(
+            text=f"Copy #{borrowing['instance_id']}"
+        )])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 

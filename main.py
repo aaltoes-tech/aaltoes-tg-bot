@@ -133,14 +133,46 @@ async def command_start_handler(message: Message) -> None:
     if message.from_user.id in settings.ADMINS and message.from_user.id not in user_repo.get_admins():
         user_repo.set_admin(message.from_user.id)
 
-    await message.answer(f"Hello, {html.bold(message.from_user.full_name)}!")
+    welcome_message = (
+        f"👋 Hello, {html.bold(message.from_user.full_name)}!\n\n"
+        f"Welcome to the Aaltoes Community Bot! 📚\n\n"
+        f"Here's what you can do:\n\n"
+        f"📚 Book Management:\n"
+        f"- /books - Browse available books\n"
+        f"- /borrow - Borrow a book\n"
+        f"- /return - Return a book\n"
+        f"- /borrowings - View your current borrowings\n"
+        f"- /history - View your borrowing history\n\n"
+        f"📅 Events:\n"
+        f"- /events - View upcoming events\n"
+        f"- /reminders - View your event reminders\n\n"
+    )
+
+    await message.answer(welcome_message)
 
 @dp.message(Command("info"))
 async def command_info_handler(message: Message) -> None:
     """
     This handler receives messages with `/info` command
     """
-    await message.answer(f"Hi! Here is the info")
+    info_message = (
+        "🌟 *About Aaltoes*\n\n"
+        "Aaltoes (Aalto Entrepreneurship Society) is the largest student-run entrepreneurship community in Northern Europe. "
+        "We are a non-profit organization that helps students and young professionals to develop their entrepreneurial skills "
+        "and build their own businesses.\n\n"
+        "*Connect with us:*\n"
+        "Website: [aaltoes.com](https://aaltoes.com)\n"
+        "Instagram: [@aaltoes](https://www.instagram.com/aaltoes/)\n"
+        "LinkedIn: [Aaltoes](https://www.linkedin.com/company/aaltoes/)\n"
+        "Facebook: [Aaltoes](https://www.facebook.com/aaltoes/)\n"
+        "Twitter: [@Aaltoes](https://twitter.com/Aaltoes)\n\n"
+        "Telegram: [@aaltoes](https://t.me/aaltoes)\n\n"
+        "📍 *Location:*\n"
+        "Aaltoes Startup Sauna\n"
+        "Otakaari 5, 02150 Espoo, Finland"
+    )
+    
+    await message.answer(info_message, parse_mode=ParseMode.MARKDOWN)
 
 
 @dp.message(Command("events"))
@@ -148,8 +180,6 @@ async def command_events_handler(message: Message) -> None:
     """
     This handler receives messages with `/events` command
     """
-
-    
     if not current_events:
         await message.answer("No upcoming events found.")
         return
@@ -208,20 +238,21 @@ async def command_refresh_handler(message: Message) -> None:
     This handler receives messages with `/refresh_events` command
     Only admins can use this command
     """
-    # Check if user is admin
-    if not user_repo.is_admin(message.from_user.id):
-        await message.answer("❌ This command is only available for admins.")
-        return
 
-    await refresh_events()
-
-    global current_events
+    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    if user['role'] != 'admin':
+        await message.answer("You are not authorized to use this command.")
+    else:
+   
+        await refresh_events()
+        global current_events
     
-    if not current_events:
-        await message.answer("❌ No upcoming events found after refresh.")
-        return
+        if not current_events:
+            await message.answer("❌ No upcoming events found after refresh.")
+            return
+        else:
+            await message.answer("🔄 Events have been refreshed! Use /events to see the updated list.")
     
-    await message.answer("🔄 Events have been refreshed! Use /events to see the updated list.")
 
 @dp.message(Command("reminders"))
 async def command_reminders_handler(message: Message) -> None:
@@ -686,7 +717,11 @@ async def command_borrowings_handler(message: Message) -> None:
     """Handle /borrowings command"""
     borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
     
-    text = f"You have {len(borrowings)} active borrowings. Press /return to return the book\n------------------------------\n"
+    text = f"You have {len(borrowings)} active borrowings."
+
+    if len(borrowings) > 0:    
+        text += "Press /return to return the book\n------------------------------\n"
+
 
     for borrowing in borrowings:
         logging.info(f"Processing borrowing: {borrowing}")
@@ -718,6 +753,23 @@ async def command_borrowings_handler(message: Message) -> None:
             text+=" is still pending"
     
     await message.answer(text)
+
+@dp.message(Command("admin"))
+async def command_admin_handler(message: Message) -> None:
+    """Handle /admin command"""
+    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    if user['role'] != 'admin':
+        await message.answer("You are not authorized to use this command.")
+    else:
+        admin_commands = (
+            "Admin Commands:\n\n"
+            "/refresh - Refresh events list\n"
+            "/refresh_books - Refresh books list\n"
+            "/check - Check pending borrowings\n"
+            "/admin - Show this help message\n\n"
+
+        )
+        await message.answer(admin_commands)
    
 @dp.message(Command("history"))
 async def command_history_handler(message: Message) -> None:
@@ -740,7 +792,8 @@ async def command_return_handler(message: Message, state: FSMContext) -> None:
         return
     
     await message.answer(
-        "📚 Please enter the ID of the book you want to return.", reply_markup=create_return_keyboard(borrowings)
+        "📚 Please select the book you want to return:",
+        reply_markup=create_return_keyboard(borrowings)
     )
     await state.set_state(BorrowState.RETURN_BOOK)
 
@@ -767,6 +820,7 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
             await message.answer("❌ This book is already pending. Return process failed.")
             await state.clear()
             return
+            
         # Update borrowing state to returned
         await borrowings_repo.update_borrowing_state(db, borrowing['borrow_id'], 'pending')
 
@@ -861,23 +915,32 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
 
 @dp.message(Command("refresh_books"))   
 async def command_refresh_books_handler(message: Message) -> None:
-    await get_books(force_refresh=True)
-    await message.answer("Books refreshed")
+    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    if user['role'] != 'admin':
+        await message.answer("You are not authorized to use this command.")
+    else:
+        await get_books(force_refresh=True)
+        await message.answer("Books refreshed")
 
 @dp.message(Command("check"))
 async def command_check_handler(message: Message) -> None:
     """Handle /check command"""
-    await message.answer("🔍 Checking...")
-    pending_borrowings = await get_pending_borrowings()
+    user = await user_repo.get_user_by_id(db, message.from_user.id)
+    if user['role'] != 'admin':
+        await message.answer("You are not authorized to use this command.")
+    else:
+        await message.answer("🔍 Checking...")
+        pending_borrowings = await get_pending_borrowings()
 
-    if not pending_borrowings:
-        await message.answer("No pending borrowings")
-        return
+        if not pending_borrowings:
+            await message.answer("No pending borrowings")
+            return
     
-    await message.answer(
-        f"📚 List of pending borrowings (Page 1):",
-        reply_markup=create_pending_borrowings_keyboard(pending_borrowings, 0)
-    )
+        await message.answer(
+            f"📚 List of pending borrowings (Page 1):",
+            reply_markup=create_pending_borrowings_keyboard(pending_borrowings, 0)
+        )
+        
 async def get_pending_borrowings(force_refresh: bool = False):
     global pending_borrowings
     if not pending_borrowings or force_refresh:
