@@ -413,8 +413,6 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 )
                 # Store the file_id for future use
                 placeholder_file_id = sent_message.photo[-1].file_id
-                # Delete the original message
-                await message.message.delete()
         else:
             # If it's a new message, send a photo message
             if placeholder_file_id:
@@ -620,42 +618,31 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
 
     try:
         file_id = await books_repo.get_file_id(db, instance_id)
-            
-        if file_id:
-            # Use cached file_id
-            await callback.message.edit_media(
-                media=InputMediaPhoto(
-                    media=file_id,
-                    caption=message_text,
-                    parse_mode=ParseMode.MARKDOWN
-                ),
-                reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
-            )
-        else:
-            # Try to use the image URL from the instance
-            image_path = None
-            if instances and instances[0].get('image'):
-                image_path = instances[0]['image']
-                if image_path.startswith('https://'):
-                    # First time sending this image - use optimized URL
-                    sent_message = await callback.message.edit_media(
-                        media=InputMediaPhoto(
-                            media=get_optimized_image_url(image_path),
-                            caption=message_text,
-                            parse_mode=ParseMode.MARKDOWN
-                        ),
-                        reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
-                    )
-                    # Store the file_id in both memory and database
-                    file_id = sent_message.photo[-1].file_id
-                    await books_repo.save_file_id(db, instance_id, file_id)
-                else:
-                    raise Exception("Invalid image path")
-            else:
-                raise Exception("No image available")
+        await callback.message.edit_media(
+            media=InputMediaPhoto(
+                media=file_id,
+                caption=message_text,
+                parse_mode=ParseMode.MARKDOWN
+            ),
+            reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+        )
     except Exception as e:
-        logging.error(f"Error handling book image: {e}")
-        try:
+
+
+        try:    
+            image_path = instances[0]['image']
+            sent_message = await callback.message.edit_media(
+                media=InputMediaPhoto(
+                media=get_optimized_image_url(image_path),
+                caption=message_text,
+                parse_mode=ParseMode.MARKDOWN
+            ),
+            reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
+        )
+                    # Store the file_id in both memory and database
+            file_id = sent_message.photo[-1].file_id
+            await books_repo.save_file_id(db, instance_id, file_id)
+        except Exception as e:
             if placeholder_file_id_2:
                 # Use cached placeholder
                 await callback.message.edit_media(
@@ -677,13 +664,6 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
                     reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
                 )
                 placeholder_file_id_2 = sent_message.photo[-1].file_id
-        except Exception as e2:
-            logging.error(f"Error handling placeholder image: {e2}")
-            await callback.message.edit_text(
-                text=message_text,
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=create_book_details_keyboard(book_id, current_page, available_instances)
-            )
 
 @dp.message(Command("books"))
 async def command_books_handler(message: Message) -> None:
