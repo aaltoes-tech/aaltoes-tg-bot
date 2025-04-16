@@ -180,8 +180,8 @@ async def command_info_handler(message: Message) -> None:
         "Aaltoes Startup Sauna\n"
         "Otakaari 5, 02150 Espoo, Finland"
     )
-    
     await message.answer(info_message, parse_mode=ParseMode.MARKDOWN)
+    await message.answer_location(60.18785632704554, 24.823863548762827)
 
 
 @dp.message(Command("events"))
@@ -637,8 +637,16 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
     books = await get_books(force_refresh=False)
     book = next((b for b in books if b['book_id'] == book_id), None)
     
+    if not book:
+        await callback.answer("❌ Book not found", show_alert=True)
+        return
+    
     # Get book instances
     instances = await books_repo.get_book_instances(db, book_id)
+    if not instances:
+        await callback.answer("❌ No instances found for this book", show_alert=True)
+        return
+        
     instance_id = instances[0]['instance_id']
     
     # Build message text with optional fields
