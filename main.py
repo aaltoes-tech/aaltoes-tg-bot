@@ -173,7 +173,7 @@ async def command_info_handler(message: Message) -> None:
         "Instagram: [@aaltoes](https://www.instagram.com/aaltoes/)\n"
         "LinkedIn: [Aaltoes](https://www.linkedin.com/company/aaltoes/)\n"
         "Facebook: [Aaltoes](https://www.facebook.com/aaltoes/)\n"
-        "Twitter: [@Aaltoes](https://twitter.com/Aaltoes)\n\n"
+        "Twitter: [@Aaltoes](https://twitter.com/Aaltoes)\n"
         "Telegram: [@aaltoes](https://t.me/aaltoes)\n\n"
         "📍 *Location:*\n"
         "Aaltoes Startup Sauna\n"
@@ -948,7 +948,13 @@ async def command_check_handler(message: Message) -> None:
             f"📚 List of pending borrowings (Page 1):",
             reply_markup=create_pending_borrowings_keyboard(pending_borrowings, 0)
         )
-        
+
+@dp.message(Command("open"))
+async def command_open_handler(message: Message) -> None:
+    """Handle /open command"""
+    await message.answer("In the future, this comand will notify us that we need to open the Startup Sauna door.")
+
+
 async def get_pending_borrowings(force_refresh: bool = False):
     global pending_borrowings
     if not pending_borrowings or force_refresh:
