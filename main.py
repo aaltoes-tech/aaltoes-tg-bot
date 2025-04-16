@@ -453,6 +453,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 )
                 # Store the file_id for future use
                 placeholder_file_id = sent_message.photo[-1].file_id
+                await message.delete()
         else:
             # If it's a new message, send a photo message
             if placeholder_file_id:
@@ -471,6 +472,7 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
                 )
                 # Store the file_id for future use
                 placeholder_file_id = sent_message.photo[-1].file_id
+                await message.delete()
             
     except Exception as e:
         logging.error(f"Error in show_books_list: {e}")
