@@ -7,8 +7,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     """Application settings."""
-    BOT_TOKEN: str = "8055720065:AAFsW1SP3TuQVcFgMoNFo1rNQI5qtaZ8vuk"
-    DATABASE_URL: str | None = None
+    BOT_TOKEN: str
     DATABASE_URL_UNPOOLED: str
     LUMA_API_KEY: str
     ADMINS: list[str] = [
