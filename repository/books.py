@@ -1,14 +1,9 @@
 import pandas as pd
 import os
-from dotenv import load_dotenv
 from db import db
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime
-
-# Load environment variables
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 class BooksRepository:
     def __init__(self):
@@ -256,6 +251,19 @@ class BooksRepository:
         except Exception as e:
             logging.error(f"Error getting book instances: {e}")
             return []
+    async def get_instance_by_id(self, db, instance_id: int) -> Dict:
+        """Get an instance by ID"""
+        try:
+            return await db.fetchrow(f"""
+                SELECT bi.*, b.title, b.author, b.year, b.description, b.image
+                FROM {self.instances_table_name} bi
+                JOIN {self.table_name} b ON bi.book_id = b.book_id
+                WHERE instance_id = $1  
+            """, instance_id)
+        except Exception as e:
+            logging.error(f"Error getting instance by ID: {e}")
+            return None
+    
 
     async def update_book_availability(self, db, instance_id: int, available: bool) -> None:
         """Update availability status of a book instance"""

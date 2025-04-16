@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from typing import Dict, List, Any
 from datetime import datetime
 import pytz
@@ -172,3 +172,65 @@ def create_instance_selection_keyboard(instances: List[Dict], book_id: int, curr
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_pending_borrowings_keyboard(pending_borrowings: List[Dict], page: int = 0) -> InlineKeyboardMarkup:
+    """Create keyboard for pending borrowings with pagination"""
+    keyboard = []
+    items_per_page = 5
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    current_page_borrowings = pending_borrowings[start_idx:end_idx]
+    
+    # Add borrowings for current page
+    for borrowing in current_page_borrowings:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"Copy #{borrowing['instance_id']} - {borrowing['title']}",
+                callback_data=f"pending_borrowing_{borrowing['borrow_id']}_{page}"
+            )
+        ])
+    
+    # Add pagination buttons
+    total_pages = (len(pending_borrowings) + items_per_page - 1) // items_per_page
+    pagination_buttons = []
+    
+    if page > 0:
+        pagination_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️ Previous",
+                callback_data=f"pending_page_{page-1}"
+            )
+        )
+    
+    if page < total_pages - 1:
+        pagination_buttons.append(
+            InlineKeyboardButton(
+                text="Next ➡️",
+                callback_data=f"pending_page_{page+1}"
+            )
+        )
+    
+    if pagination_buttons:
+        keyboard.append(pagination_buttons)
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_approve_borrowing_keyboard(borrowing_id: str, page: int) -> InlineKeyboardMarkup:
+    """Create keyboard for approving borrowing"""
+    keyboard = []
+    keyboard.append([
+        InlineKeyboardButton(text="Approve", callback_data=f"state_borrowing_{borrowing_id}_1"),
+        InlineKeyboardButton(text="Decline", callback_data=f"state_borrowing_{borrowing_id}_0")
+    ])
+
+    keyboard.append([InlineKeyboardButton(text="Back", callback_data=f"pending_page_{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_return_keyboard(borrowings: List[Dict]) -> ReplyKeyboardMarkup:
+    """Create keyboard for returning a book"""
+    keyboard = [[]]  # Start with one row
+    for borrowing in borrowings:
+        keyboard[0].append(KeyboardButton(text=f"Copy #{borrowing['instance_id']}"))
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+

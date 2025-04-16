@@ -23,7 +23,8 @@ from repository.user import UserRepository
 from repository.events import EventsRepository
 from repository.reminders import RemindersRepository
 from repository.books import BooksRepository
-from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard
+from repository.borrowings import BorrowingsRepository
+from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard
 
 
 def get_event_timezone(event: Dict[str, Any]) -> pytz.timezone:
@@ -63,6 +64,7 @@ user_repo = UserRepository()
 events_repo = EventsRepository(api_key=settings.LUMA_API_KEY)
 reminders_repo = RemindersRepository()
 books_repo = BooksRepository()
+borrowings_repo = BorrowingsRepository()
 
 # Initialize storage
 storage = MemoryStorage()
@@ -72,11 +74,18 @@ dp = Dispatcher(storage=storage)
 
 current_events: Dict[str, Dict] = {}
 EVENTS_CACHE_DURATION = timedelta(hours=0.5)
+OVERDUE_CHECK_INTERVAL = timedelta(hours=1)
+OVERDUE_NOTIFICATION_INTERVAL = timedelta(hours=12)
+pending_borrowings: List[Dict] = []
 
 current_books: List[Dict] = []
 
 placeholder_file_id: str = None
 book_images_cache: Dict[int, str] = {}
+
+class BorrowState(StatesGroup):
+    SELECT_INSTANCE = State()  # Only need this state for direct instance input
+    RETURN_BOOK = State()
 
 async def refresh_events() -> None:
     """Refresh events data from the API"""
@@ -340,17 +349,17 @@ async def check_reminders(bot: Bot) -> None:
             reminders = await reminders_repo.get_reminders(db)
             now = datetime.now(pytz.UTC)
             
-            for reminder in reminders:
-                if reminder['reminder_time'] <= now:
-                    event = current_events.get(reminder['event_id'])
+            if reminders:
+                for reminder in reminders:
+                    if reminder['reminder_time'] <= now:
+                        event = current_events.get(reminder['event_id'])
                     if event:
                         await send_reminder(bot, reminder['user_id'], event)
-            
-            # Check every minute
             await asyncio.sleep(60)
             
         except Exception as e:
             logging.error(f"Error checking reminders: {e}")
+            logging.error(f"Reminders: {reminders}")
             await asyncio.sleep(60)
 
 async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> None:
@@ -423,6 +432,21 @@ async def show_books_list(message: Message | CallbackQuery, page: int = 0) -> No
         else:
             await message.message.answer("❌ An error occurred while loading the books list. Please try again.")
 
+async def update_overdue_borrowings(bot: Bot) -> None:
+    """Check for borrowings that need to be returned"""
+    while True:
+        await asyncio.sleep(OVERDUE_CHECK_INTERVAL.total_seconds())
+        await borrowings_repo.update_overdue_borrowings(db)
+
+async def send_overdue_notification(bot: Bot) -> None:
+    """Send a notification to the user that their borrowing is overdue"""
+    while True:
+        await asyncio.sleep(OVERDUE_NOTIFICATION_INTERVAL.total_seconds())
+        overdue_borrowings = await borrowings_repo.get_overdue_borrowings(db)
+        for borrowing in overdue_borrowings:
+            await bot.send_message(borrowing['user_id'], f"Copy #{borrowing['instance_id']} is overdue. Please return it to the library.")
+            
+
 @dp.callback_query(F.data.startswith("instance_select_"))
 async def book_instance_select_handler(callback: CallbackQuery) -> None:
     """Handle book instance selection"""
@@ -479,6 +503,16 @@ async def book_instance_handler(callback: CallbackQuery) -> None:
             await callback.answer("❌ This copy is no longer available", show_alert=True)
             return
         
+        # Check if user has already borrowed this book
+        borrowings = await borrowings_repo.get_user_borrowings(db, callback.from_user.id)
+
+        if len(borrowings) >= 3:
+            await callback.answer("❌ You have reached the maximum number of borrowings (3)", show_alert=True)
+            return
+        
+        # Create borrowing record
+        borrow_id = await borrowings_repo.create_borrowing(db, callback.from_user.id, instance_id)
+        
         # Update instance availability
         await books_repo.update_book_availability(db, instance_id, False)
         
@@ -486,12 +520,16 @@ async def book_instance_handler(callback: CallbackQuery) -> None:
         books = await get_books(force_refresh=True)  # Refresh to get updated availability
         book = next((b for b in books if b['book_id'] == book_id), None)
         
+        # Get borrowing details
+        borrowing = await borrowings_repo.get_borrowing_by_instance(db, instance_id)
+        return_time = borrowing['borrow_return_time'].strftime('%d %b %Y')
+        
         success_message = (
             f"✅ Successfully borrowed\n\n"
             f"📚 {book['title']}\n"
             f"👤 Author: {book.get('author', 'Unknown')}\n"
-            f"📖 Copy #{instance_id}\n\n"
-            f"🔔 Reminder: You have 14 days to return the book.\n\n"
+            f"📖 Copy #{instance_id}\n"
+            f"📅 Return by: {return_time}\n\n"
             f"Back to library /books"
         )
     
@@ -617,6 +655,276 @@ async def command_books_handler(message: Message) -> None:
         logging.error(f"Error in /books command: {e}")
         await message.answer("❌ An error occurred while loading the books. Please try again.")
 
+@dp.message(Command("borrowings"))
+async def command_borrowings_handler(message: Message) -> None:
+    """Handle /borrowings command"""
+    borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
+    if not borrowings:
+        await message.answer("You have no borrowings.")
+        return
+    
+    text = f"You have {len(borrowings)} borrowings. Press /return to return the book\n------------------------------\n"
+
+    for borrowing in borrowings:
+        logging.info(f"Processing borrowing: {borrowing}")
+        text += f"📚 {borrowing['title']}\n"
+        text += f"👤 Author: {borrowing['author']}\n"
+        text += f"🖼️ Copy #{borrowing['instance_id']}\n"
+        text += f"Return by: {borrowing['borrow_return_time']}\n"
+        text += f"State: "
+        if borrowing['state'] == 'overdue':
+            text += "❌ Overdue\n"
+        elif borrowing['state'] == 'pending':
+            text += "⏳ Pending\n"
+        elif borrowing['state'] == 'borrowed':
+            text += "🤝 Borrowed\n"
+        elif borrowing['state'] == 'returned':
+            text += "✅ Returned\n"
+        text +="------------------------------\n"
+    pending_borrowings = await borrowings_repo.get_user_pending_borrowings(db, message.from_user.id)
+    if pending_borrowings:
+        m = len(pending_borrowings)
+
+        for i, book in  enumerate(pending_borrowings):
+            text+=f"Book #{book['instance_id']}"
+            if i < m-1:
+                text+=","
+        if m>1:
+            text+=" are still pending"
+        else:
+            text+=" is still pending"
+    
+    await message.answer(text)
+   
+@dp.message(Command("history"))
+async def command_history_handler(message: Message) -> None:
+    """Handle /history command"""
+    borrowings = await borrowings_repo.get_user_borrowings_history(db, message.from_user.id)
+    if not borrowings:
+        await message.answer("You have no borrowings.")
+        return
+    text = f"Your borrowing history:\n"
+    for i, borrowing in enumerate(borrowings):
+        text+=f"{i+1}. Time: {borrowing['borrow_time']}, "
+        text+=f"Copy #{borrowing['instance_id']}\n"
+    await message.answer(text)
+@dp.message(Command("return"))
+async def command_return_handler(message: Message, state: FSMContext) -> None:
+    """Handle /return command"""
+    borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
+    if not borrowings:
+        await message.answer("You have no borrowings.")
+        return
+    
+    await message.answer(
+        "📚 Please enter the ID of the book you want to return.", reply_markup=create_return_keyboard(borrowings)
+    )
+    await state.set_state(BorrowState.RETURN_BOOK)
+
+@dp.message(BorrowState.RETURN_BOOK)
+async def process_return_book(message: Message, state: FSMContext) -> None:
+    """Process book return by instance ID"""
+    try:
+        # Extract instance ID from "Copy #id" format
+        instance_id = int(message.text.strip().split('#')[1])
+        
+        # Check if the instance exists and is currently borrowed
+        borrowing = await borrowings_repo.get_borrowing_by_instance(db, instance_id)
+        
+        if not borrowing:
+            await message.answer("❌ This book is not currently borrowed. Return process failed.")
+            await state.clear()
+            return
+            
+        if borrowing['user_id'] != message.from_user.id:
+            await message.answer("❌ You don't borrow this book. Return process failed.")
+            await state.clear()
+            return
+        if borrowing['state'] == 'pending':
+            await message.answer("❌ This book is already pending. Return process failed.")
+            await state.clear()
+            return
+        # Update borrowing state to returned
+        await borrowings_repo.update_borrowing_state(db, borrowing['borrow_id'], 'pending')
+
+        success_message = (
+            f"✅ Successfully returned\n\n"
+            f"📚 {borrowing['title']}\n"
+            f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
+            f"📖 Copy #{instance_id}\n\n"
+            f"Thank you for returning the book!"
+        )
+        
+        await message.answer(success_message)
+        await state.clear()
+        
+    except (ValueError, IndexError):
+        await message.answer("❌ Please select a book from the keyboard or enter a valid instance ID (number).")
+    except Exception as e:
+        logging.error(f"Error in process_return_book: {e}")
+        await message.answer("❌ An error occurred while processing the return. Please try again.")
+        await state.clear()
+
+@dp.message(Command("borrow"))
+async def command_borrow_handler(message: Message, state: FSMContext) -> None:
+    """Handle /borrow command"""
+    # Check if user has reached borrowing limit
+    borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
+    if len(borrowings) >= 3:
+        await message.answer("❌ You have reached the maximum number of borrowings (3)")
+        return
+
+    await message.answer(
+        "📚 Please enter the instance ID of the book you want to borrow.\n"
+        "You can find the instance ID on the book cover"
+    )
+    await state.set_state(BorrowState.SELECT_INSTANCE)
+
+@dp.message(BorrowState.SELECT_INSTANCE)
+async def process_instance_selection(message: Message, state: FSMContext) -> None:
+    """Process instance selection for borrowing"""
+    try:
+        instance_id = int(message.text.strip())
+        
+        # Get instance details
+        instance = await books_repo.get_instance_by_id(db, instance_id)
+        if not instance:
+            await message.answer("❌ Instance not found")
+            await state.clear()
+            return
+            
+        if not instance['available']:
+            await message.answer("❌ This copy is not available")
+            await state.clear()
+            return
+            
+        # Get book details
+        book = await books_repo.get_book_by_id(db, instance['book_id'])
+        if not book:
+            await message.answer("❌ Book not found")
+            await state.clear()
+            return
+        
+        # Create borrowing record
+        borrow_id = await borrowings_repo.create_borrowing(db, message.from_user.id, instance_id)
+        
+        # Update instance availability
+        await books_repo.update_book_availability(db, instance_id, False)
+        
+        # Get borrowing details
+        borrowing = await borrowings_repo.get_borrowing_by_instance(db, instance_id)
+        return_time = borrowing['borrow_return_time'].strftime('%d %b %Y')
+        
+        success_message = (
+            f"✅ Successfully borrowed\n\n"
+            f"📚 {book['title']}\n"
+            f"👤 Author: {book.get('author', 'Unknown')}\n"
+            f"📖 Copy #{instance_id}\n"
+            f"📅 Return by: {return_time}\n\n"
+            f"Back to library /books"
+        )
+        
+        await message.answer(
+            success_message,
+        )
+        await state.clear()
+        
+    except ValueError:
+        await message.answer("❌ Please enter a valid instance ID (number).")
+    except Exception as e:
+        logging.error(f"Error in process_instance_selection: {e}")
+        await message.answer("❌ An error occurred while booking the copy. Please try again.")
+        await state.clear()
+
+@dp.message(Command("refresh_books"))   
+async def command_refresh_books_handler(message: Message) -> None:
+    await get_books(force_refresh=True)
+    await message.answer("Books refreshed")
+
+@dp.message(Command("check"))
+async def command_check_handler(message: Message) -> None:
+    """Handle /check command"""
+    await message.answer("🔍 Checking...")
+    pending_borrowings = await get_pending_borrowings()
+
+    if not pending_borrowings:
+        await message.answer("No pending borrowings")
+        return
+    
+    await message.answer(
+        f"📚 List of pending borrowings (Page 1):",
+        reply_markup=create_pending_borrowings_keyboard(pending_borrowings, 0)
+    )
+async def get_pending_borrowings(force_refresh: bool = False):
+    global pending_borrowings
+    if not pending_borrowings or force_refresh:
+        pending_borrowings = await borrowings_repo.get_pending_borrowings(db)
+    return pending_borrowings
+
+@dp.callback_query(F.data.startswith("pending_page_"))
+async def pending_page_handler(callback: CallbackQuery) -> None:
+    """Handle pending borrowings pagination"""
+    try:
+        page = int(callback.data.split("_")[2])
+
+        pending_borrowings = await get_pending_borrowings()
+        
+        
+        if not pending_borrowings:
+            await callback.answer("No pending borrowings", show_alert=True)
+            return
+            
+        await callback.message.edit_text(
+            f"📚 List of pending borrowings (Page {page + 1}):",
+            reply_markup=create_pending_borrowings_keyboard(pending_borrowings, page)
+        )
+            
+    except Exception as e:
+        logging.error(f"Error in pending_page_handler: {e}")
+        await callback.answer("An error occurred while changing pages", show_alert=True)
+
+@dp.callback_query(F.data.startswith("pending_borrowing_"))
+async def pending_borrowing_handler(callback: CallbackQuery) -> None:
+    """Handle pending borrowing button clicks"""
+
+    borrowing_id = int(callback.data.split("_")[2])  # Convert to integer
+    page = int(callback.data.split("_")[3])
+    borrowing = await borrowings_repo.get_borrowing_by_id(db, borrowing_id)
+    text = f"📚 {borrowing['title']}\n"
+    text += f"👤 Author: {borrowing['author']}\n"
+    text += f"📖 Copy #{borrowing['instance_id']}\n"
+    text += f"📅 Returned at: {borrowing['borrow_return_time']}\n"
+    text += f"Borrowed by: @{borrowing['username']}\n"
+
+    await callback.message.edit_text(text, reply_markup= create_approve_borrowing_keyboard(borrowing_id, page))
+
+
+@dp.callback_query(F.data.startswith("state_borrowing_"))
+async def state_borrowing_handler(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle borrowing state button clicks"""
+    borrowing_id = int(callback.data.split("_")[2])  # Convert to integer
+    state = callback.data.split("_")[3]
+    borrowing = await borrowings_repo.get_borrowing_by_id(db, borrowing_id)
+    
+    if state == "1":
+        await borrowings_repo.update_borrowing_state(db, borrowing_id, 'returned')
+        await books_repo.update_book_availability(db, borrowing['instance_id'], True)
+        await bot.send_message(borrowing['user_id'], f"Admin has approved your return for Copy #{borrowing['instance_id']}")
+    elif state == "0":
+        if borrowing['borrow_return_time'] < datetime.now():
+            await borrowings_repo.update_borrowing_state(db, borrowing_id, 'overdue')
+        else:
+            await borrowings_repo.update_borrowing_state(db, borrowing_id, 'borrowed')
+        await bot.send_message(borrowing['user_id'], f"Admin hasn't approved your borrowing for Copy #{borrowing['instance_id']}")
+    
+    pending_borrowings = await get_pending_borrowings(force_refresh=True)
+    if pending_borrowings:
+        await callback.message.edit_text(
+            f"📚 List of pending borrowings (Page 1):",
+            reply_markup=create_pending_borrowings_keyboard(pending_borrowings, 0)
+        )
+    else:
+        await callback.message.edit_text("No pending borrowings")
 
 async def main() -> None:
     
@@ -628,11 +936,14 @@ async def main() -> None:
     await user_repo.init(db)
     await reminders_repo.init(db)
     await books_repo.init(db)
+    await borrowings_repo.init(db)
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
     
     # Start reminders checker
     asyncio.create_task(check_reminders(bot))
+    asyncio.create_task(update_overdue_borrowings(bot))
+    asyncio.create_task(send_overdue_notification(bot))
     
     # And the run events dispatching
     try:
