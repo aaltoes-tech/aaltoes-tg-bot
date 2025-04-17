@@ -1168,7 +1168,7 @@ async def process_confirmation(message: Message, state: FSMContext, bot: Bot) ->
         motivation = data.get('motivation')
         
         if not motivation:
-            await message.answer("❌ Error: Motivation not found. Please try the application process again.")
+            await message.answer("❌ Error: Motivation not found. Please start the application process again.")
             await state.clear()
             return
             
@@ -1283,7 +1283,7 @@ async def user_handler(callback: CallbackQuery) -> None:
     user = await user_repo.get_user(user_id)
     request = await requests_repo.get_user_access(db, user_id)
     keyboard = create_update_user_keyboard(user, page)
-    await callback.message.edit_text(f"User: @{user['username']}\nSecret word: {request['secret_word']}\nJoined at: {user['created_at']}", reply_markup=keyboard)
+    await callback.message.edit_text(f"User: @{user['username']}\nSecret word: {request['secret_word']}\nJoined at: {format_datetime(user['created_at'])}", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("suspend_access_"))
 async def suspend_access(callback: CallbackQuery, bot: Bot) -> None:
