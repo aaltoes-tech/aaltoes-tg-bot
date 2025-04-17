@@ -14,7 +14,7 @@ class BorrowingsRepository:
             await db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.table_name} (
                     borrow_id SERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES tg_user(id),
+                    user_id BIGINT REFERENCES tg_user(id),
                     instance_id INTEGER REFERENCES {self.instances_table_name}(instance_id),
                     borrow_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     borrow_return_time TIMESTAMP,
