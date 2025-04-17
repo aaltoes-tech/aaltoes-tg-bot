@@ -1300,7 +1300,11 @@ async def suspend_access(callback: CallbackQuery, bot: Bot) -> None:
     await requests_repo.suspend_access(db, user_id)
     await bot.send_message(user_id, "Admin has suspended your access to Startup Sauna.")
     users = await get_users_with_access(force_refresh=True)
-    await callback.message.edit_text("Users with access (Page 1)", reply_markup=create_users_keyboard(users, 0))
+    if not users:
+        await callback.answer("No users with access access", show_alert=True)
+        return
+    else:
+            await callback.message.edit_text("Users with access (Page 1)", reply_markup=create_users_keyboard(users, 0))
 
 @dp.callback_query(F.data.startswith("users_page_"))
 async def users_page_handler(callback: CallbackQuery) -> None:
