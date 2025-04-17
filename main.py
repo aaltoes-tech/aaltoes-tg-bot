@@ -1062,28 +1062,31 @@ async def command_about_handler(message: Message) -> None:
     await message.answer(about_message, parse_mode=ParseMode.MARKDOWN)
 
 async def main() -> None:
-    
     # Initialize Bot instance with default bot properties which will be passed to all API calls
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    
     # Connect to the database
     await db.connect(settings.DATABASE_URL_UNPOOLED)
-    # Initialize tables
-    await user_repo.init(db)
-    await reminders_repo.init(db)
-    await books_repo.init(db)
-    await borrowings_repo.init(db)
     
-    # Start periodic events refresh
-    asyncio.create_task(periodic_events_refresh())
-    
-    # Start reminders checker
-    asyncio.create_task(check_reminders(bot))
-    asyncio.create_task(update_overdue_borrowings(bot))
-    asyncio.create_task(send_overdue_notification(bot))
-    
-    # And the run events dispatching
     try:
+        # Initialize tables in the correct order
+        await user_repo.init(db)  # First initialize users table
+        await books_repo.init(db)  # Then books and instances
+        await borrowings_repo.init(db)  # Then borrowings (which depends on users and books)
+        await reminders_repo.init(db)  # Finally reminders (which depends on users)
+        
+        # Start periodic tasks
+        asyncio.create_task(periodic_events_refresh())
+        asyncio.create_task(check_reminders(bot))
+        asyncio.create_task(update_overdue_borrowings(bot))
+        asyncio.create_task(send_overdue_notification(bot))
+        
+        # Start the bot
         await dp.start_polling(bot)
+        
+    except Exception as e:
+        logging.error(f"Error during initialization: {e}")
+        raise
     finally:
         # Close the database connection when the bot is stopped
         await db.close()

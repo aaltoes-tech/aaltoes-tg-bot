@@ -113,14 +113,18 @@ class BorrowingsRepository:
         
     async def get_overdue_borrowings(self, db) -> List[Dict]:
         """Get all overdue borrowings"""
-        return await db.fetch(f"""
-            SELECT b.*, u.username, u.full_name, bi.book_id, bk.title
-            FROM {self.table_name} b
-            JOIN users u ON b.user_id = u.user_id
-            JOIN {self.instances_table_name} bi ON b.instance_id = bi.instance_id
-            JOIN books bk ON bi.book_id = bk.book_id
-            WHERE b.state IN ('overdue')
-        """)
+        try:
+            return await db.fetch(f"""
+                SELECT b.*, bi.instance_id, bk.title, bk.author, u.username
+                FROM {self.table_name} b
+                JOIN {self.instances_table_name} bi ON b.instance_id = bi.instance_id
+                JOIN books bk ON bi.book_id = bk.book_id
+                JOIN tg_user u ON b.user_id = u.user_id
+                WHERE b.state = 'overdue'
+            """)
+        except Exception as e:
+            logging.error(f"Error getting overdue borrowings: {e}")
+            return []
         
     async def update_overdue_borrowings(self, db) -> None:
         """Update the state of overdue borrowings"""
