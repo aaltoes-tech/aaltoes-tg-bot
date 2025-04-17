@@ -91,7 +91,7 @@ EVENTS_CACHE_DURATION = timedelta(hours=0.5)
 OVERDUE_CHECK_INTERVAL = timedelta(hours=1)
 OVERDUE_NOTIFICATION_INTERVAL = timedelta(hours=12)
 pending_borrowings: List[Dict] = []
-
+users_with_access: List[Dict] = []
 current_books: List[Dict] = []
 
 current_requests: List[Dict] = []
@@ -112,6 +112,12 @@ def get_optimized_image_url(ipfs_url: str) -> str:
     if '?img-width=' not in ipfs_url:
         return f"{ipfs_url}?img-width=500&img-quality=80&img-format=webp"
     return ipfs_url
+
+async def get_users_with_access(force_refresh: bool = False):
+    global users_with_access
+    if not users_with_access or force_refresh:
+        users_with_access = await requests_repo.get_users_with_access(db)
+    return users_with_access
 
 class BorrowState(StatesGroup):
     SELECT_INSTANCE = State()  # Only need this state for direct instance input
@@ -1267,13 +1273,15 @@ async def command_access_handler(message: Message) -> None:
         else:
             await message.answer("You do not have access to Startup Sauna and have no pending requests.")
     else:
-        users = await requests_repo.get_users_with_access(db)
+        users = await get_users_with_access(force_refresh=True)
         if not users:
             await message.answer("No users with access")
         else:
             text = "Users with access (Page 1)"
             keyboard = create_users_keyboard(users)
             await message.answer(text, reply_markup=keyboard)
+
+
 
 @dp.callback_query(F.data.startswith("user_"))
 async def user_handler(callback: CallbackQuery) -> None:
@@ -1291,7 +1299,8 @@ async def suspend_access(callback: CallbackQuery, bot: Bot) -> None:
     user_id = int(callback.data.split("_")[2])
     await requests_repo.suspend_access(db, user_id)
     await bot.send_message(user_id, "Admin has suspended your access to Startup Sauna.")
-    await callback.message.edit_text("Access suspended.")
+    users = await get_users_with_access(force_refresh=True)
+    await callback.message.edit_text("Users with access (Page 1)", reply_markup=create_users_keyboard(users, 0))
 
 @dp.callback_query(F.data.startswith("users_page_"))
 async def users_page_handler(callback: CallbackQuery) -> None:
