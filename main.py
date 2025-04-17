@@ -1316,7 +1316,7 @@ async def users_page_handler(callback: CallbackQuery) -> None:
         users = await requests_repo.get_users_with_access(db)
         
         if not users:
-            await callback.answer("No users available", show_alert=True)
+            await callback.message.edit_text("No users with access")
             return
             
         await callback.message.edit_text(
