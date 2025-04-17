@@ -1236,7 +1236,7 @@ async def request_handler(callback: CallbackQuery, bot: Bot) -> None:
         await bot.send_message(request['user_id'], f"Admin saw your request for Startup Sauna access.")
         await requests_repo.update_request_state(db, request_id, 'pending')
     user = await user_repo.get_user(request['user_id'])
-    text = f"Request ID: {request['request_id']}\nUser: @{user['username']}\nMotivation: {request['motivation']}"
+    text = f"Request ID: {request['request_id']}\nUser: @{user['username']}\nMotivation: \n{request['motivation']}"
     await callback.message.edit_text(text, reply_markup=create_approve_request_keyboard(request_id, page))
 
 @dp.callback_query(F.data.startswith("change_request_state_"))
