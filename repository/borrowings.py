@@ -116,7 +116,7 @@ class BorrowingsRepository:
         return await db.fetch(f"""
             SELECT b.*, u.username, u.full_name, bi.book_id, bk.title
             FROM {self.table_name} b
-            JOIN users u ON b.user_id = u.user_id
+            JOIN tg_user u ON b.user_id = u.id
             JOIN {self.instances_table_name} bi ON b.instance_id = bi.instance_id
             JOIN books bk ON bi.book_id = bk.book_id
             WHERE b.state IN ('overdue')
