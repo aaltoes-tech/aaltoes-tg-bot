@@ -1301,7 +1301,7 @@ async def suspend_access(callback: CallbackQuery, bot: Bot) -> None:
     await bot.send_message(user_id, "Admin has suspended your access to Startup Sauna.")
     users = await get_users_with_access(force_refresh=True)
     if not users:
-        await callback.answer("No users with access access", show_alert=True)
+        await callback.message.edit_text("No users with access")
         return
     else:
             await callback.message.edit_text("Users with access (Page 1)", reply_markup=create_users_keyboard(users, 0))
