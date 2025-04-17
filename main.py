@@ -4,11 +4,7 @@ import secrets
 import sys
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any, Union
-
 import pytz
-import aiohttp
-import os
-
 from aiogram import Bot, Dispatcher, html, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -27,50 +23,6 @@ from repository.books import BooksRepository
 from repository.borrowings import BorrowingsRepository
 from repository.requests import RequestsRepository
 from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard
-
-
-def get_event_timezone(event: Dict[str, Any]) -> pytz.timezone:
-    """Get timezone for an event from event data"""
-    try:
-        if event.get('timezone'):
-            return pytz.timezone(event['timezone'])
-    except Exception as e:
-        logging.error(f"Error getting timezone from event data: {e}")
-    
-    # Fallback to Helsinki timezone if timezone data is not available
-    return pytz.timezone('Europe/Helsinki')
-
-def format_event_time(event: Dict[str, Any]) -> str:
-    """Format event time with timezone information"""
-    try:
-        # Get the event's timezone
-        event_tz = get_event_timezone(event)
-        
-        # Ensure the input time is timezone-aware (UTC)
-        if event['start_time'].tzinfo is None:
-            utc_time = pytz.UTC.localize(event['start_time'])
-        else:
-            utc_time = event['start_time']
-        
-        # Convert to event's local time
-        local_time = utc_time.astimezone(event_tz)
-        
-        return f"{local_time.strftime('%d %b %Y, %H:%M')}"
-    except Exception as e:
-        logging.error(f"Error formatting event time: {e}")
-        # Fallback to simple formatting if there's an error
-        return event['start_time'].strftime('%d %b %Y, %H:%M')
-
-def format_datetime(dt: datetime) -> str:
-    """Format datetime in a consistent, readable way"""
-    if not dt:
-        return "N/A"
-    # Convert to Helsinki timezone if not already in it
-    helsinki_tz = pytz.timezone('Europe/Helsinki')
-    if dt.tzinfo is None:
-        dt = pytz.UTC.localize(dt)
-    local_dt = dt.astimezone(helsinki_tz)
-    return local_dt.strftime('%d %b %Y, %H:%M')
 
 # Initialize repositories
 user_repo = UserRepository()
@@ -104,20 +56,7 @@ document_file_id = None  # For Startup Sauna access document
 placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiawgmucvhow67n6xclzly2zxb6hgchwgacgljdh6iprzzwlebkwqe?img-width=500&img-quality=80&img-format=webp'
 placeholder_file_2_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafkreiberkd4tzafmhmsepnwbtw32ois4b4enfvcl23hoo6bbkhrmz2moe?img-width=500&img-quality=80&img-format=webp'
 
-def get_optimized_image_url(ipfs_url: str) -> str:
-    """Get optimized image URL from Pinata IPFS URL"""
-    if not ipfs_url or not ipfs_url.startswith('https://'):
-        return ipfs_url
-    # Add optimization parameters if not already present
-    if '?img-width=' not in ipfs_url:
-        return f"{ipfs_url}?img-width=500&img-quality=80&img-format=webp"
-    return ipfs_url
 
-async def get_users_with_access(force_refresh: bool = False):
-    global users_with_access
-    if not users_with_access or force_refresh:
-        users_with_access = await requests_repo.get_users_with_access(db)
-    return users_with_access
 
 class BorrowState(StatesGroup):
     SELECT_INSTANCE = State()  # Only need this state for direct instance input
@@ -161,6 +100,65 @@ async def get_requests(force_refresh: bool = False) -> List[Dict]:
         current_requests = pending_requests + applied_requests
         pending, applied = len(pending_requests), len(applied_requests)
     return current_requests, (pending, applied)
+
+def get_event_timezone(event: Dict[str, Any]) -> pytz.timezone:
+    """Get timezone for an event from event data"""
+    try:
+        if event.get('timezone'):
+            return pytz.timezone(event['timezone'])
+    except Exception as e:
+        logging.error(f"Error getting timezone from event data: {e}")
+    
+    # Fallback to Helsinki timezone if timezone data is not available
+    return pytz.timezone('Europe/Helsinki')
+
+async def get_users_with_access(force_refresh: bool = False):
+    global users_with_access
+    if not users_with_access or force_refresh:
+        users_with_access = await requests_repo.get_users_with_access(db)
+    return users_with_access
+
+def format_event_time(event: Dict[str, Any]) -> str:
+    """Format event time with timezone information"""
+    try:
+        # Get the event's timezone
+        event_tz = get_event_timezone(event)
+        
+        # Ensure the input time is timezone-aware (UTC)
+        if event['start_time'].tzinfo is None:
+            utc_time = pytz.UTC.localize(event['start_time'])
+        else:
+            utc_time = event['start_time']
+        
+        # Convert to event's local time
+        local_time = utc_time.astimezone(event_tz)
+        
+        return f"{local_time.strftime('%d %b %Y, %H:%M')}"
+    except Exception as e:
+        logging.error(f"Error formatting event time: {e}")
+        # Fallback to simple formatting if there's an error
+        return event['start_time'].strftime('%d %b %Y, %H:%M')
+
+def format_datetime(dt: datetime) -> str:
+    """Format datetime in a consistent, readable way"""
+    if not dt:
+        return "N/A"
+    # Convert to Helsinki timezone if not already in it
+    helsinki_tz = pytz.timezone('Europe/Helsinki')
+    if dt.tzinfo is None:
+        dt = pytz.UTC.localize(dt)
+    local_dt = dt.astimezone(helsinki_tz)
+    return local_dt.strftime('%d %b %Y, %H:%M')
+
+def get_optimized_image_url(ipfs_url: str) -> str:
+    """Get optimized image URL from Pinata IPFS URL"""
+    if not ipfs_url or not ipfs_url.startswith('https://'):
+        return ipfs_url
+    # Add optimization parameters if not already present
+    if '?img-width=' not in ipfs_url:
+        return f"{ipfs_url}?img-width=500&img-quality=80&img-format=webp"
+    return ipfs_url
+
 
 @dp.message(Command("start"))
 async def command_start_handler(message: Message) -> None:
