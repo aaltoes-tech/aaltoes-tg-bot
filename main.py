@@ -189,7 +189,7 @@ async def command_info_handler(message: Message) -> None:
         "Telegram: [@aaltoes](https://t.me/aaltoes)\n\n"
         "📍 *Location:*\n"
         "Aaltoes Startup Sauna\n"
-        "Otakaari 5, 02150 Espoo, Finland"
+        "Puumiehenkuja 5, 02150 Espoo"
     )
     await message.answer(info_message, parse_mode=ParseMode.MARKDOWN)
     await message.answer_location(60.18785632704554, 24.823863548762827)
