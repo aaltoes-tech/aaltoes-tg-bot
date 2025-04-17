@@ -235,4 +235,83 @@ def create_return_keyboard(borrowings: List[Dict]) -> ReplyKeyboardMarkup:
         )])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
+def create_apply_keyboard() -> InlineKeyboardMarkup:
+    """Create keyboard for applying for access"""
+    keyboard = []
+    keyboard.append([
+        InlineKeyboardButton(text="Apply", callback_data=f"apply"),
+    ])
 
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_confirm_keyboard() -> ReplyKeyboardMarkup:
+    """Create keyboard for confirming application"""
+    keyboard = [
+        [KeyboardButton(text="Confirm"), 
+         KeyboardButton(text="Cancel")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def create_requests_keyboard(requests: List[Dict], page: int = 0) -> InlineKeyboardMarkup:
+    """Create keyboard for requests with pagination"""
+    keyboard = []
+    requests_per_page = 5
+    start_idx = page * requests_per_page
+    end_idx = start_idx + requests_per_page
+    current_page_requests = requests[start_idx:end_idx]
+    
+    # Add request buttons
+    for request in current_page_requests:
+        request_text = f"Request ID: {request['request_id']}\n"
+        keyboard.append([InlineKeyboardButton(text=request_text, callback_data=f"request_{request['request_id']}_{page}")])
+    
+    # Add pagination buttons
+    pagination_buttons = []
+    if page > 0:
+        pagination_buttons.append(InlineKeyboardButton(text="⬅️ Previous", callback_data=f"requests_page_{page-1}"))
+    if end_idx < len(requests):
+        pagination_buttons.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"requests_page_{page+1}"))
+    
+    if pagination_buttons:
+        keyboard.append(pagination_buttons)
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_approve_request_keyboard(request_id: int, page: int) -> InlineKeyboardMarkup:
+    """Create keyboard for approving a request"""
+    keyboard = []
+    keyboard.append([InlineKeyboardButton(text="Approve", callback_data=f"change_request_state_{request_id}_1"),
+                    InlineKeyboardButton(text="Reject", callback_data=f"change_request_state_{request_id}_0")])
+    keyboard.append([InlineKeyboardButton(text="Back", callback_data=f"requests_page_{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_users_keyboard(users: List[Dict], page: int = 0) -> InlineKeyboardMarkup:
+    """Create keyboard for users with pagination"""
+    keyboard = []
+    users_per_page = 5
+    start_idx = page * users_per_page
+    end_idx = start_idx + users_per_page
+    current_page_users = users[start_idx:end_idx]
+    
+    # Add user buttons
+    for user in current_page_users:
+        keyboard.append([InlineKeyboardButton(text=f"@{user['username']}", callback_data=f"user_{user['user_id']}_{page}")])
+    
+    # Add pagination buttons
+    pagination_buttons = []
+    if page > 0:
+        pagination_buttons.append(InlineKeyboardButton(text="⬅️ Previous", callback_data=f"users_page_{page-1}"))
+    if end_idx < len(users):
+        pagination_buttons.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"users_page_{page+1}"))
+    
+    if pagination_buttons:
+        keyboard.append(pagination_buttons)
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_update_user_keyboard(user: Dict, page: int) -> InlineKeyboardMarkup:
+    """Create keyboard for updating a user"""
+    keyboard = []
+    keyboard.append([InlineKeyboardButton(text="Suspend access", callback_data=f"suspend_access_{user['id']}")])
+    keyboard.append([InlineKeyboardButton(text="Back", callback_data=f"users_page_{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

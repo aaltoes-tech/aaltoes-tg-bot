@@ -1,10 +1,13 @@
 import asyncio
 import logging
+import secrets
 import sys
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any, Union
 
 import pytz
+import aiohttp
+import os
 
 from aiogram import Bot, Dispatcher, html, F
 from aiogram.client.default import DefaultBotProperties
@@ -22,7 +25,8 @@ from repository.events import EventsRepository
 from repository.reminders import RemindersRepository
 from repository.books import BooksRepository
 from repository.borrowings import BorrowingsRepository
-from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard
+from repository.requests import RequestsRepository
+from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard
 
 
 def get_event_timezone(event: Dict[str, Any]) -> pytz.timezone:
@@ -74,6 +78,7 @@ events_repo = EventsRepository(api_key=settings.LUMA_API_KEY)
 reminders_repo = RemindersRepository()
 books_repo = BooksRepository()
 borrowings_repo = BorrowingsRepository()
+requests_repo = RequestsRepository()
 
 # Initialize storage
 storage = MemoryStorage()
@@ -89,9 +94,11 @@ pending_borrowings: List[Dict] = []
 
 current_books: List[Dict] = []
 
+current_requests: List[Dict] = []
 # Global variables to store the placeholder file_ids
 placeholder_file_id = None  # For main books list
 placeholder_file_id_2 = None  # For individual book details
+document_file_id = None  # For Startup Sauna access document
 
 # Use Pinata's image optimization with reduced size (300px width) and WebP format
 placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiawgmucvhow67n6xclzly2zxb6hgchwgacgljdh6iprzzwlebkwqe?img-width=500&img-quality=80&img-format=webp'
@@ -109,6 +116,11 @@ def get_optimized_image_url(ipfs_url: str) -> str:
 class BorrowState(StatesGroup):
     SELECT_INSTANCE = State()  # Only need this state for direct instance input
     RETURN_BOOK = State()
+
+class ApplyState(StatesGroup):
+    MOTIVATION = State()
+    CONFIRMATION = State()
+
 
 async def refresh_events() -> None:
     """Refresh events data from the API"""
@@ -129,6 +141,20 @@ async def get_books(force_refresh: bool = False) -> List[Dict]:
         current_books = await books_repo.get_all_books(db)
     
     return current_books
+
+async def get_requests(force_refresh: bool = False) -> List[Dict]:
+    """Get requests from cache or refresh if needed"""
+    global current_requests
+
+    pending = 0
+    applied = 0
+
+    if current_requests is None or force_refresh:
+        pending_requests = await requests_repo.get_pending_requests(db)
+        applied_requests = await requests_repo.get_applied_requests(db)
+        current_requests = pending_requests + applied_requests
+        pending, applied = len(pending_requests), len(applied_requests)
+    return current_requests, (pending, applied)
 
 @dp.message(Command("start"))
 async def command_start_handler(message: Message) -> None:
@@ -158,17 +184,22 @@ async def command_help_handler(message: Message) -> None:
     """
     This handler receives messages with `/help` command
     """
-    help_message = "List of available commands:\n\n"
+    help_message = "💡 *Available commands:*\n\n"
+    help_message += "Commands for events:\n"
     help_message += "/info - Show information about Aaltoes\n"
     help_message += "/events - Show upcoming events\n"
     help_message += "/reminders - Show your event reminders\n"
+    help_message += "Commands for borrowing:\n"
     help_message += "/books - Show available books\n"
     help_message += "/borrow - Borrow a book\n"
     help_message += "/return - Return a book\n"
     help_message += "/borrowings - Show your borrowings\n"
     help_message += "/history - Show your borrowing history\n"
+    help_message += "Commands for Startup Sauna access:\n"
+    help_message += "/apply - Apply for Startup Sauna access\n"
+    help_message += "/access - Check your access status\n"
 
-    await message.answer(help_message)
+    await message.answer(help_message, parse_mode=ParseMode.MARKDOWN)
 
 @dp.message(Command("info"))
 async def command_info_handler(message: Message) -> None:
@@ -794,7 +825,8 @@ async def command_admin_handler(message: Message) -> None:
             "/refresh_books - Refresh books list\n"
             "/check - Check pending borrowings\n"
             "/admin - Show this help message\n\n"
-
+            "/access - List users with Startup Sauna access and suspend access if needed\n"
+            "/approve - Approve a requests for Startup Sauna access\n"
         )
         await message.answer(admin_commands)
    
@@ -893,12 +925,15 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         # Get instance details
         instance = await books_repo.get_instance_by_id(db, instance_id)
         if not instance:
-            await message.answer("❌ Instance not found", show_alert=True)
-            await state.clear()
+            await message.answer("❌ Instance not found. Try again or use /cancel", show_alert=True)
             return
             
         if not instance['available']:
-            await message.answer("❌ This copy is not available", show_alert=True)
+            await message.answer("❌ This copy is not available. Try again or use /cancel", show_alert=True)
+            return
+        
+        if instance['book_id'] == "/cancel":
+            await message.answer("Borrowing process cancelled")
             await state.clear()
             return
         
@@ -1044,22 +1079,241 @@ async def state_borrowing_handler(callback: CallbackQuery, bot: Bot) -> None:
     else:
         await callback.message.edit_text("No pending borrowings")
 
-@dp.message(Command("about"))
-async def command_about_handler(message: Message) -> None:
-    """Handle /about command"""
-    about_message = (
-        "🤖 *Aaltoes Library Bot*\n\n"
-        "A Telegram bot for managing the Aaltoes library. "
-        "Borrow and return books, check your borrowings, and stay updated with upcoming events.\n\n"
-        "📚 *Features:*\n"
-        "- Browse and borrow books\n"
-        "- Manage your borrowings\n"
-        "- Get event reminders\n"
-        "- Easy book returns\n\n"
-        "Type /help to see all available commands!"
-    )
+
+
+@dp.message(Command("apply"))       
+async def command_apply_handler(message: Message, state: FSMContext) -> None:
+    """Handle /apply command for Startup Sauna access request"""
+    # Check if user already has a pending request
+    user_requests = await requests_repo.get_user_active_requests(db, message.from_user.id)
+    user_access = await requests_repo.get_user_access(db, message.from_user.id)
+
+    global document_file_id
+
+    if user_access:
+        await message.answer(
+            "❌ You already have Startup Sauna access. Check your access status with /access"
+        )
+        return
+    if user_requests:
+        await message.answer(
+            "❌ You already have a pending request for Startup Sauna access. "
+            "Please wait for it to be reviewed before submitting a new one."
+        )
+        return
     
-    await message.answer(about_message, parse_mode=ParseMode.MARKDOWN)
+    try:
+        text = "You are applying for Startup Sauna access. Please read document carefully and start application process."
+        keyboard = create_apply_keyboard()
+        if document_file_id:
+            # Use cached file_id
+            await message.answer_document(
+                document=document_file_id,
+                caption=text,
+                reply_markup=keyboard
+            )
+        else:
+            # First time sending the document
+            sent_message = await message.answer_document(
+                document=FSInputFile("temp/Access to Startup Sauna.pdf"),
+                caption=text,
+                reply_markup=keyboard
+            )
+            # Store the file_id for future use
+            document_file_id = sent_message.document.file_id
+        
+    except Exception as e:
+        logging.error(f"Error sending document: {e}")
+        await message.answer(
+            "❌ An error occurred while sending the document. "
+            "Please try again later."
+        )
+
+@dp.callback_query(F.data.startswith("apply"))
+async def process_apply(callback: CallbackQuery, state: FSMContext) -> None:
+    """Process the apply for Startup Sauna access"""
+    await callback.message.answer("Please provide a short description of why you want to work from Startup Sauna (max 500 characters). If you want to cancel, please send /cancel")
+    await state.set_state(ApplyState.MOTIVATION)
+
+@dp.message(ApplyState.MOTIVATION)
+async def process_motivation(message: Message, state: FSMContext) -> None:
+    """Process the motivation for Startup Sauna access"""
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("Application cancelled.")
+        return
+    
+    logging.info(f"Motivation: {message.text}")
+    
+    await state.update_data(motivation=message.text)
+    await message.answer("Please confirm your application", reply_markup=create_confirm_keyboard())
+    await state.set_state(ApplyState.CONFIRMATION)
+
+@dp.message(ApplyState.CONFIRMATION)
+async def process_confirmation(message: Message, state: FSMContext, bot: Bot) -> None:
+    """Process the confirmation for Startup Sauna access"""
+    if message.text == "Cancel":
+        await state.clear()
+        await message.answer("Application cancelled.")
+        return
+    if message.text == "Confirm":
+        # Get data from state before clearing it
+        data = await state.get_data()
+
+        if len(data.get('motivation')) > 500:
+            await message.answer("❌ Error: Motivation is too long. Please send it again")
+            await state.set_state(ApplyState.MOTIVATION)
+            return
+        
+        motivation = data.get('motivation')
+        
+        if not motivation:
+            await message.answer("❌ Error: Motivation not found. Please try the application process again.")
+            await state.clear()
+            return
+            
+        secret_word = secrets.token_hex(4).upper()
+
+        try:
+            await requests_repo.create_request(db, message.from_user.id, motivation, secret_word)
+            await message.answer("Application sent. You can check the status with /access")
+            admins = await user_repo.get_admins()
+            for admin in admins:
+                try:
+                    await bot.send_message(admin['id'], f"New Startup Sauna access request from @{message.from_user.username}\n")
+                except Exception as e:
+                    logging.error(f"Error sending message to admin {admin['id']}: {e}")
+        except Exception as e:
+            logging.error(f"Error creating request: {e}")
+            await message.answer("❌ An error occurred while submitting your application. Please try again.")
+        finally:
+            await state.clear()
+        return
+    
+    await message.answer("Please confirm your application by sending Confirm or Cancel.")
+
+@dp.message(Command("approve"))
+async def command_review_requests_handler(message: Message) -> None:
+    """Handle /approve command for admins"""
+
+    current_requests, (pending, applied) = await get_requests(force_refresh=True)
+    await message.answer(f"Current pending requests: {pending}\nNew application requests: {applied}", reply_markup=create_requests_keyboard(current_requests))
+    
+@dp.callback_query(F.data.startswith("requests_page_"))
+async def requests_page_handler(callback: CallbackQuery) -> None:
+    """Handle requests pagination"""
+    try:
+        page = int(callback.data.split("_")[2])
+        
+        all_requests, _ = await get_requests()
+        
+        if not all_requests:
+            await callback.answer("No requests available", show_alert=True)
+            return
+            
+        await callback.message.edit_text(
+            f"📝 Requests (Page {page + 1}):",
+            reply_markup=create_requests_keyboard(all_requests, page)
+        )
+            
+    except Exception as e:
+        logging.error(f"Error in requests_page_handler: {e}")
+        await callback.answer("An error occurred while changing pages", show_alert=True)
+
+@dp.callback_query(F.data.startswith("request_"))
+async def request_handler(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle request button clicks"""
+    request_id = int(callback.data.split("_")[1])
+    page = int(callback.data.split("_")[2])
+    request = await requests_repo.get_request_by_id(db, request_id)
+    if request['state'] == 'applied':
+        await bot.send_message(request['user_id'], f"Admin saw your request for Startup Sauna access.")
+        await requests_repo.update_request_state(db, request_id, 'pending')
+    user = await user_repo.get_user(request['user_id'])
+    text = f"Request ID: {request['request_id']}\nUser: @{user['username']}\nMotivation: {request['motivation']}"
+    await callback.message.edit_text(text, reply_markup=create_approve_request_keyboard(request_id, page))
+
+@dp.callback_query(F.data.startswith("change_request_state_"))
+async def change_request_state(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle request state change"""
+    global current_requests
+    request_id = int(callback.data.split("_")[3])
+    state = int(callback.data.split("_")[4])
+    request = await requests_repo.get_request_by_id(db, request_id)
+    if state == 1:
+        await requests_repo.update_request_state(db, request_id, 'approved')
+        await bot.send_message(request['user_id'], f"Admin approved your request for Startup Sauna access. You can find your secret word in /access")
+
+    else:
+        await requests_repo.update_request_state(db, request_id, 'rejected')
+        await bot.send_message(request['user_id'], f"Admin rejected your request for Startup Sauna access.")
+    current_requests, (pending, applied) = await get_requests(force_refresh=True)
+    await callback.message.edit_text(f"Current pending requests: {pending}\nNew application requests: {applied}", reply_markup=create_requests_keyboard(current_requests))
+
+@dp.message(Command("access"))
+async def command_access_handler(message: Message) -> None:
+    """Handle /access command for users"""
+    admin = await user_repo.get_user(message.from_user.id)
+    if admin['role'] != 'admin':
+        user = await requests_repo.get_user_last_request(db, message.from_user.id)
+        if user['state'] == 'approved':
+            await message.answer(f"You have access to Startup Sauna. Your secret word is \n\n*{user['secret_word']}*", parse_mode=ParseMode.MARKDOWN)
+        elif user['state'] == 'applied':
+            await message.answer("Admin haven't seen your request yet.")
+        elif user['state'] == 'pending':
+            await message.answer("Admin has seen your request. Please wait for it to be reviewed.")
+        elif user['state'] == 'rejected':
+            await message.answer("Your request was rejected. Please try again later.")
+        else:
+            await message.answer("You do not have access to Startup Sauna and have no pending requests.")
+    else:
+        users = await requests_repo.get_users_with_access(db)
+        if not users:
+            await message.answer("No users with access")
+        else:
+            text = "Users with access (Page 1)"
+            keyboard = create_users_keyboard(users)
+            await message.answer(text, reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("user_"))
+async def user_handler(callback: CallbackQuery) -> None:
+    """Handle user button clicks"""
+    user_id = int(callback.data.split("_")[1])
+    page = int(callback.data.split("_")[2])
+    user = await user_repo.get_user(user_id)
+    request = await requests_repo.get_user_access(db, user_id)
+    keyboard = create_update_user_keyboard(user, page)
+    await callback.message.edit_text(f"User: @{user['username']}\nSecret word: {request['secret_word']}\nJoined at: {user['created_at']}", reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("suspend_access_"))
+async def suspend_access(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle suspend access button clicks"""
+    user_id = int(callback.data.split("_")[2])
+    await requests_repo.suspend_access(db, user_id)
+    await bot.send_message(user_id, "Admin has suspended your access to Startup Sauna.")
+    await callback.message.edit_text("Access suspended.")
+
+@dp.callback_query(F.data.startswith("users_page_"))
+async def users_page_handler(callback: CallbackQuery) -> None:
+    """Handle users pagination"""
+    try:
+        page = int(callback.data.split("_")[2])
+        
+        # Get users with access
+        users = await requests_repo.get_users_with_access(db)
+        
+        if not users:
+            await callback.answer("No users available", show_alert=True)
+            return
+            
+        await callback.message.edit_text(
+            f"Users with access (Page {page + 1}):",
+            reply_markup=create_users_keyboard(users, page)
+        )
+            
+    except Exception as e:
+        logging.error(f"Error in users_page_handler: {e}")
+        await callback.answer("An error occurred while changing pages", show_alert=True)
 
 async def main() -> None:
     
@@ -1072,6 +1326,7 @@ async def main() -> None:
     await reminders_repo.init(db)
     await books_repo.init(db)
     await borrowings_repo.init(db)
+    await requests_repo.init(db)
     
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
