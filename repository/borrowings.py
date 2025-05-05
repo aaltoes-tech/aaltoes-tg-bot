@@ -114,7 +114,7 @@ class BorrowingsRepository:
     async def get_overdue_borrowings(self, db) -> List[Dict]:
         """Get all overdue borrowings"""
         return await db.fetch(f"""
-            SELECT b.*, u.username, u.full_name, bi.book_id, bk.title
+            SELECT b.*, u.username, u.name, bi.book_id, bk.title
             FROM {self.table_name} b
             JOIN tg_user u ON b.user_id = u.id
             JOIN {self.instances_table_name} bi ON b.instance_id = bi.instance_id

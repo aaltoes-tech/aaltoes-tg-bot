@@ -515,9 +515,15 @@ async def remove_reminder_handler(callback: CallbackQuery) -> None:
 
 async def periodic_events_refresh() -> None:
     """Periodically refresh events data"""
-    while True:
+    while True:  
+        try:
+            logging.info("Refreshing events data")
+            await refresh_events()
+            await asyncio.sleep(EVENTS_CACHE_DURATION.total_seconds())
+        except Exception as e:
+            logging.error(f"Error refreshing events data: {e}")
+        
         await asyncio.sleep(EVENTS_CACHE_DURATION.total_seconds())
-        await refresh_events()
 
 async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
     """Send a reminder message to the user"""
@@ -644,17 +650,21 @@ async def show_books_list(message: Union[Message, CallbackQuery], page: int = 0)
 async def update_overdue_borrowings(bot: Bot) -> None:
     """Check for borrowings that need to be returned"""
     while True:
-        await asyncio.sleep(OVERDUE_CHECK_INTERVAL.total_seconds())
+        logging.info("Checking for overdue borrowings")
         await borrowings_repo.update_overdue_borrowings(db)
+        await asyncio.sleep(OVERDUE_CHECK_INTERVAL.total_seconds())
 
 async def send_overdue_notification(bot: Bot) -> None:
     """Send a notification to the user that their borrowing is overdue"""
     while True:
-        await asyncio.sleep(OVERDUE_NOTIFICATION_INTERVAL.total_seconds())
-        overdue_borrowings = await borrowings_repo.get_overdue_borrowings(db)
-        for borrowing in overdue_borrowings:
-            await bot.send_message(borrowing['user_id'], f"Copy #{borrowing['instance_id']} is overdue. Please return it to the library.")
-            
+        try:
+            logging.info("Sending overdue notifications")
+            overdue_borrowings = await borrowings_repo.get_overdue_borrowings(db)
+            for borrowing in overdue_borrowings:
+                await bot.send_message(borrowing['user_id'], f"Copy #{borrowing['instance_id']} is overdue. Please return it to the library.")
+        except Exception as e:
+            logging.error(f"Error sending overdue notifications: {e}")
+        await asyncio.sleep(OVERDUE_NOTIFICATION_INTERVAL.total_seconds()) 
 
 @dp.callback_query(F.data.startswith("instance_select_"))
 async def book_instance_select_handler(callback: CallbackQuery) -> None:
@@ -901,7 +911,7 @@ async def handle_borrowings(message: Union[Message, CallbackQuery]) -> None:
         return
     borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
     
-    text = f"You have {len(borrowings)} active borrowings.\n"
+    text = f"You have {len(borrowings)} active borrowings. We check for overdue borrowings every hour. And notify you every 12 hours about overdue borrowings.\n"
 
     if len(borrowings) > 0:    
         text += "Press /return to return the book\n------------------------------\n"
@@ -1787,15 +1797,19 @@ async def main() -> None:
                 reminder_tasks[task_key] = task
                 logging.info(f"Initialized reminder task for event {event['id']} and user {reminder['user_id']}")
     
-    # Start periodic events refresh
-    asyncio.create_task(periodic_events_refresh())
+    # Create periodic tasks
+    periodic_tasks = [
+        periodic_events_refresh(),
+        update_overdue_borrowings(bot),
+        send_overdue_notification(bot)
+    ]
     
-    asyncio.create_task(update_overdue_borrowings(bot))
-    asyncio.create_task(send_overdue_notification(bot))
-    
-    # And the run events dispatching
+    # Start periodic tasks and bot polling concurrently
     try:
-        await dp.start_polling(bot)
+        await asyncio.gather(
+            dp.start_polling(bot),
+            *periodic_tasks
+        )
     finally:
         # Close the database connection when the bot is stopped
         await db.close()
