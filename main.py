@@ -997,7 +997,7 @@ async def command_return_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(BorrowState.RETURN_BOOK)
 
 @dp.message(BorrowState.RETURN_BOOK)
-async def process_return_book(message: Message, state: FSMContext) -> None:
+async def process_return_book(message: Message, state: FSMContext, bot: Bot) -> None:
     """Process book return by instance ID"""
     try:
         # Extract instance ID from "Copy #id" format
@@ -1033,6 +1033,18 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
         )
         
         await message.answer(success_message)
+        
+        # Notify admins about the return
+        admins = await user_repo.get_admins()
+        admin_message = (
+           "Someone returned a book. Use /check to review the return"
+        )
+        for admin in admins:
+            try:
+                await bot.send_message(admin['id'], admin_message)
+            except Exception as e:
+                logging.error(f"Error sending message to admin {admin['id']}: {e}")
+        
         await state.clear()
         
     except (ValueError, IndexError):
@@ -1162,7 +1174,7 @@ async def command_return_handler(message: Message, state: FSMContext) -> None:
     await handle_return(message, state)
 
 @dp.message(BorrowState.RETURN_BOOK)
-async def process_return_book(message: Message, state: FSMContext) -> None:
+async def process_return_book(message: Message, state: FSMContext, bot: Bot) -> None:
     """Process book return by instance ID"""
     try:
         # Extract instance ID from "Copy #id" format
@@ -1198,6 +1210,24 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
         )
         
         await message.answer(success_message)
+        
+        # Notify admins about the return
+        admins = await user_repo.get_admins()
+        admin_message = (
+            f"📚 New book return request\n\n"
+            f"Book: {borrowing['title']}\n"
+            f"Author: {borrowing.get('author', 'Unknown')}\n"
+            f"Copy #{instance_id}\n"
+            f"Returned by: @{message.from_user.username}\n"
+            f"Return by: {format_datetime(borrowing['borrow_return_time'])}\n\n"
+            f"Use /check to review the return"
+        )
+        for admin in admins:
+            try:
+                await bot.send_message(admin['id'], admin_message)
+            except Exception as e:
+                logging.error(f"Error sending message to admin {admin['id']}: {e}")
+        
         await state.clear()
         
     except (ValueError, IndexError):
