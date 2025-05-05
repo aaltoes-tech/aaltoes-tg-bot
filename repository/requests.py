@@ -83,7 +83,7 @@ class RequestsRepository:
         try:
             return await db.fetch(
                 f"""
-                SELECT u.username, r.secret_word, r.user_id
+                SELECT u.username, u.name,r.secret_word, r.user_id
                 FROM {self.table_name} r
                 JOIN tg_user u ON r.user_id = u.id
                 WHERE r.state = 'approved'

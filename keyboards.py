@@ -295,7 +295,7 @@ def create_users_keyboard(users: List[Dict], page: int = 0) -> InlineKeyboardMar
     
     # Add user buttons
     for user in current_page_users:
-        keyboard.append([InlineKeyboardButton(text=f"@{user['name']}", callback_data=f"user_{user['user_id']}_{page}")])
+        keyboard.append([InlineKeyboardButton(text=f"{user['name']} - @{user['username']}", callback_data=f"user_{user['user_id']}_{page}")])
     
     # Add pagination buttons
     pagination_buttons = []

@@ -44,7 +44,6 @@ class EventsRepository:
             try:
                 # Extract the actual event data from the nested structure
                 event = event_data.get('event', {})
-                print(event)
                 if not event:
                     continue
                     
