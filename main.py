@@ -192,36 +192,36 @@ async def handle_help(message: Union[Message, CallbackQuery]) -> None:
     """Shared handler for help command and callback"""
     help_message = "🤖 *Aaltoes Community Bot Help*\n\n"
     
-    help_message += "📱 *Main Commands:*\n"
-    help_message += "/menu - Open main menu with all actions\n"
-    help_message += "/help - Show this help message\n"
-    help_message += "/info - Show information about Aaltoes\n\n"
+    help_message += "📱 *Main Commands*\n"
+    help_message += "/menu \- Open main menu with all actions\n"
+    help_message += "/help \- Show this help message\n"
+    help_message += "/info \- Show information about Aaltoes\n\n"
     
-    help_message += "📚 *Library Commands:*\n"
-    help_message += "/books - Browse available books\n"
-    help_message += "/borrow - Borrow a book\n"
-    help_message += "/return - Return a book\n"
-    help_message += "/borrowings - View your current borrowings\n"
-    help_message += "/history - View your borrowing history\n\n"
+    help_message += "📚 *Library Commands*\n"
+    help_message += "/books \- Browse available books\n"
+    help_message += "/borrow \- Borrow a book\n"
+    help_message += "/return \- Return a book\n"
+    help_message += "/borrowings \- View your current borrowings\n"
+    help_message += "/history \- View your borrowing history\n\n"
     
-    help_message += "🚪 *Startup Sauna Access:*\n"
-    help_message += "/apply - Apply for Startup Sauna access\n"
-    help_message += "/access - Check your access status\n"
-    help_message += "/confirm - Verify your account\n\n"
+    help_message += "🚪 *Startup Sauna Access*\n"
+    help_message += "/apply \- Apply for Startup Sauna access\n"
+    help_message += "/access \- Check your access status\n"
+    help_message += "/confirm \- Verify your account\n\n"
     
-    help_message += "📅 *Events & Reminders:*\n"
-    help_message += "/events - View upcoming events\n"
-    help_message += "/reminders - View your reminders\n\n"
+    help_message += "📅 *Events & Reminders*\n"
+    help_message += "/events \- View upcoming events\n"
+    help_message += "/reminders \- View your reminders\n\n"
     
-    help_message += "👤 *Profile:*\n"
-    help_message += "/change_name - Update your name\n\n"
+    help_message += "👤 *Profile*\n"
+    help_message += "/change\_name \- Update your name\n\n"
     
-    help_message += "💡 *Tip:* Use /menu for quick access to all features!"
+    help_message += "💡 *Tip*: Use /menu for quick access to all features"
 
     if isinstance(message, Message):
-        await message.answer(help_message, parse_mode=ParseMode.MARKDOWN)
+        await message.answer(help_message, parse_mode=ParseMode.MARKDOWN_V2)
     else:
-        await message.message.answer(help_message, parse_mode=ParseMode.MARKDOWN)
+        await message.message.answer(help_message, parse_mode=ParseMode.MARKDOWN_V2)
 
 @dp.callback_query(F.data.startswith("action_help"))
 async def help_callback_handler(callback: CallbackQuery) -> None:

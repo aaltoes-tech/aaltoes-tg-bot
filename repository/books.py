@@ -93,8 +93,7 @@ class BooksRepository:
             books = []
             for row in results:
                 try:
-                    # Log the row to see its structure
-                    logging.info(f"Processing row: {row}")
+     
                     
                     # Check if row is a dictionary or tuple
                     if isinstance(row, dict):
