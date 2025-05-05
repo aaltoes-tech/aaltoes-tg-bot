@@ -533,7 +533,7 @@ async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
             f"📅 {format_event_time(event)}\n"
             f"📍 {event['location']}"
         )
-
+        logging.info(f"Sending reminder to user {user_id} for event {event['title']}")
         await bot.send_message(user_id, message)
 
         try:    
