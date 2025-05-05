@@ -452,10 +452,7 @@ async def reminder_callback_handler(callback: CallbackQuery) -> None:
         await callback.answer("You already have a reminder set for this event!")
         return
     
-    # Schedule the reminder and store the task
-    task = asyncio.create_task(schedule_reminder(callback.bot, user_id, event))
-    task_key = f"reminder_{event_id}_{user_id}"
-    reminder_tasks[task_key] = task
+    schedule_reminder(callback.bot, user_id, event)
 
     message_text = (
         f"*{event['title']}*\n\n"
@@ -525,8 +522,9 @@ async def periodic_events_refresh() -> None:
         
         await asyncio.sleep(EVENTS_CACHE_DURATION.total_seconds())
 
-async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
+async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any], delay: int = 0) -> None:
     """Send a reminder message to the user"""
+    await asyncio.sleep(delay)
     try:
         message = (
             f"🔔 Reminder: {event['title']} starts in 1 hour!\n\n"
@@ -543,6 +541,8 @@ async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
                 
     except Exception as e:
         logging.error(f"Error sending reminder: {e}")
+
+
 
 async def schedule_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
     """Schedule a reminder for the event"""
