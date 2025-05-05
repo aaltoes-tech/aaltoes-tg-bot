@@ -43,7 +43,7 @@ def create_events_keyboard(events: Dict[str, Dict]) -> InlineKeyboardMarkup:
     keyboard = []
     for event_id, event in events.items():
         keyboard.append([InlineKeyboardButton(
-            text=event['title'],
+            text=f"{format_event_time(event)} – {event['title']}",
             callback_data=f"event_{event_id}"
         )])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -295,7 +295,7 @@ def create_users_keyboard(users: List[Dict], page: int = 0) -> InlineKeyboardMar
     
     # Add user buttons
     for user in current_page_users:
-        keyboard.append([InlineKeyboardButton(text=f"@{user['username']}", callback_data=f"user_{user['user_id']}_{page}")])
+        keyboard.append([InlineKeyboardButton(text=f"@{user['name']}", callback_data=f"user_{user['user_id']}_{page}")])
     
     # Add pagination buttons
     pagination_buttons = []
@@ -315,3 +315,47 @@ def create_update_user_keyboard(user: Dict, page: int) -> InlineKeyboardMarkup:
     keyboard.append([InlineKeyboardButton(text="Suspend access", callback_data=f"suspend_access_{user['id']}")])
     keyboard.append([InlineKeyboardButton(text="Back", callback_data=f"users_page_{page}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_actions_keyboard(page: int = 0) -> InlineKeyboardMarkup:
+    """Create keyboard for actions with specific page layout"""
+    # Define pages with their specific actions
+    pages = [
+        [  # Page 1
+            ("🚪 Open Startup Sauna", "action_open_sauna"),
+            ("❓ Show Commands", "action_help"),
+            ("✏️ Update Profile Name", "action_change_name"),
+            ("📅 View Events", "action_events")
+        ],
+        [  # Page 2
+            ("📝 Apply for Access Card", "action_apply"),
+            ("🔑 Check Access Card Status", "action_access"),
+            ("✅ Verify Account", "action_confirm"),
+            ("🔔 My Reminders", "action_reminders")
+        ],
+        [  # Page 3
+            ("📚 My Books", "action_borrowings"),
+            ("📖 Get Book", "action_borrow"),
+            ("↩️ Return Book", "action_return"),
+            ("📋 Past Loans", "action_history")
+        ]
+    ]
+    
+    # Create keyboard
+    keyboard = []
+    
+    # Add action buttons for current page
+    for text, callback_data in pages[page]:
+        keyboard.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
+    
+    # Add pagination buttons
+    pagination_buttons = []
+    if page > 0:
+        pagination_buttons.append(InlineKeyboardButton(text="⬅️ Previous", callback_data=f"actions_page_{page-1}"))
+    if page < len(pages) - 1:
+        pagination_buttons.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"actions_page_{page+1}"))
+    
+    if pagination_buttons:
+        keyboard.append(pagination_buttons)
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+

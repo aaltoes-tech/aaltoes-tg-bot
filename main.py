@@ -22,7 +22,7 @@ from repository.reminders import RemindersRepository
 from repository.books import BooksRepository
 from repository.borrowings import BorrowingsRepository
 from repository.requests import RequestsRepository
-from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard
+from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard, create_actions_keyboard
 
 # Initialize repositories
 user_repo = UserRepository()
@@ -56,7 +56,8 @@ document_file_id = None  # For Startup Sauna access document
 placeholder_file_1_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafybeiawgmucvhow67n6xclzly2zxb6hgchwgacgljdh6iprzzwlebkwqe?img-width=500&img-quality=80&img-format=webp'
 placeholder_file_2_url = 'https://amaranth-defiant-snail-192.mypinata.cloud/ipfs/bafkreiberkd4tzafmhmsepnwbtw32ois4b4enfvcl23hoo6bbkhrmz2moe?img-width=500&img-quality=80&img-format=webp'
 
-
+# Dictionary to store reminder tasks
+reminder_tasks: Dict[str, asyncio.Task] = {}
 
 class BorrowState(StatesGroup):
     SELECT_INSTANCE = State()  # Only need this state for direct instance input
@@ -66,15 +67,19 @@ class ApplyState(StatesGroup):
     MOTIVATION = State()
     CONFIRMATION = State()
 
+class ConfirmState(StatesGroup):
+    CONFIRMATION = State()
+
+class ChangeNameState(StatesGroup):
+    NEW_NAME = State()
 
 async def refresh_events() -> None:
     """Refresh events data from the API"""
     global current_events
     try:
         events = await events_repo.get_upcoming_events()
-        if events:
-            current_events = {event['id']: event for event in events}
-            logging.info(f"Events refreshed at {datetime.now()}")
+        current_events = {event['id']: event for event in events}
+        logging.info(f"Events refreshed at {datetime.now()}")
     except Exception as e:
         logging.error(f"Error refreshing events: {e}")
 
@@ -183,27 +188,50 @@ async def command_start_handler(message: Message) -> None:
 
     await message.answer(welcome_message)
 
-@dp.message(Command("help"))
-async def command_help_handler(message: Message) -> None:
-    """
-    This handler receives messages with `/help` command
-    """
-    help_message = "💡 *Available commands:*\n\n"
-    help_message += "Commands for events:\n"
-    help_message += "/info - Show information about Aaltoes\n"
-    help_message += "/events - Show upcoming events\n"
-    help_message += "/reminders - Show your event reminders\n"
-    help_message += "Commands for borrowing:\n"
-    help_message += "/books - Show available books\n"
+async def handle_help(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for help command and callback"""
+    help_message = "🤖 *Aaltoes Community Bot Help*\n\n"
+    
+    help_message += "📱 *Main Commands:*\n"
+    help_message += "/menu - Open main menu with all actions\n"
+    help_message += "/help - Show this help message\n"
+    help_message += "/info - Show information about Aaltoes\n\n"
+    
+    help_message += "📚 *Library Commands:*\n"
+    help_message += "/books - Browse available books\n"
     help_message += "/borrow - Borrow a book\n"
     help_message += "/return - Return a book\n"
-    help_message += "/borrowings - Show your borrowings\n"
-    help_message += "/history - Show your borrowing history\n"
-    help_message += "Commands for Startup Sauna access:\n"
+    help_message += "/borrowings - View your current borrowings\n"
+    help_message += "/history - View your borrowing history\n\n"
+    
+    help_message += "🚪 *Startup Sauna Access:*\n"
     help_message += "/apply - Apply for Startup Sauna access\n"
     help_message += "/access - Check your access status\n"
+    help_message += "/confirm - Verify your account\n\n"
+    
+    help_message += "📅 *Events & Reminders:*\n"
+    help_message += "/events - View upcoming events\n"
+    help_message += "/reminders - View your reminders\n\n"
+    
+    help_message += "👤 *Profile:*\n"
+    help_message += "/change_name - Update your name\n\n"
+    
+    help_message += "💡 *Tip:* Use /menu for quick access to all features!"
 
-    await message.answer(help_message, parse_mode=ParseMode.MARKDOWN)
+    if isinstance(message, Message):
+        await message.answer(help_message, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await message.message.answer(help_message, parse_mode=ParseMode.MARKDOWN)
+
+@dp.callback_query(F.data.startswith("action_help"))
+async def help_callback_handler(callback: CallbackQuery) -> None:
+    """Handle help button click"""
+    await handle_help(callback)
+
+@dp.message(Command("help"))
+async def command_help_handler(message: Message) -> None:
+    """Handle /help command"""
+    await handle_help(message)
 
 @dp.message(Command("info"))
 async def command_info_handler(message: Message) -> None:
@@ -230,20 +258,73 @@ async def command_info_handler(message: Message) -> None:
     await message.answer_location(60.18785632704554, 24.823863548762827)
 
 
-@dp.message(Command("events"))
-async def command_events_handler(message: Message) -> None:
-    """
-    This handler receives messages with `/events` command
-    """
+async def handle_confirm(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
+    """Shared handler for confirm command and callback"""
+    user = await user_repo.get_user(message.from_user.id)
+    if user['confirm'] == False:
+        text = "Please send your full name to confirm your account. Example: John Doe\n\nYou can also send /cancel to cancel the confirmation."
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
+        await state.set_state(ConfirmState.CONFIRMATION)
+    else:
+        text = "You are already confirmed."
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
+
+@dp.callback_query(F.data.startswith("action_confirm"))
+async def confirm_callback_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle confirm button click"""
+    await handle_confirm(callback, state)
+
+@dp.message(Command("confirm"))
+async def command_confirm_handler(message: Message, state: FSMContext) -> None:
+    """Handle /confirm command"""
+    await handle_confirm(message, state)
+
+@dp.message(ConfirmState.CONFIRMATION)
+async def process_confirmation(message: Message, state: FSMContext) -> None:
+    """Process the confirmation state"""
+    if message.text == "/cancel":
+        await message.answer("Confirmation cancelled.")
+        await state.clear()
+    else:
+        name = message.text
+        await message.answer(f"Your full name is set to {name}. You can change it later in /menu")
+        await user_repo.update_user(message.from_user.id, confirm=True, name=name)
+        await state.clear()
+
+async def handle_events(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for events command and callback"""
     if not current_events:
-        await message.answer("No upcoming events found.")
-        return
+        await refresh_events()
+        if not current_events:
+            if isinstance(message, Message):
+                await message.answer("No upcoming events found.")
+            else:
+                await message.message.answer("No upcoming events found.")
+            return
     
     reply_markup = create_events_keyboard(current_events)
     message_text = f"📅 Upcoming Events"
 
-    await message.answer(message_text, reply_markup=reply_markup)
+    if isinstance(message, Message):
+        await message.answer(message_text, reply_markup=reply_markup)
+    else:
+        await message.message.answer(message_text, reply_markup=reply_markup)
 
+@dp.callback_query(F.data.startswith("action_events"))
+async def events_callback_handler(callback: CallbackQuery) -> None:
+    """Handle events button click"""
+    await handle_events(callback)
+
+@dp.message(Command("events"))
+async def command_events_handler(message: Message) -> None:
+    """Handle /events command"""
+    await handle_events(message)
 
 @dp.callback_query(F.data.startswith("event_"))
 async def event_callback_handler(callback: CallbackQuery) -> None:
@@ -288,7 +369,7 @@ async def back_to_events_handler(callback: CallbackQuery) -> None:
     )
 
 @dp.message(Command("refresh"))
-async def command_refresh_handler(message: Message) -> None:
+async def command_refresh_handler(message: Message, bot: Bot) -> None:
     """
     This handler receives messages with `/refresh_events` command
     Only admins can use this command
@@ -298,8 +379,14 @@ async def command_refresh_handler(message: Message) -> None:
     if user['role'] != 'admin':
         await message.answer("You are not authorized to use this command.")
     else:
-   
         await refresh_events()
+        # Get all admin users from database
+        admins = await user_repo.get_admins()
+        for admin in admins:
+            try:
+                await bot.send_message(admin['id'], f"Events refreshed at {datetime.now()}")
+            except Exception as e:
+                logging.error(f"Error sending message to admin {admin['id']}: {e}")
         global current_events
     
         if not current_events:
@@ -309,14 +396,17 @@ async def command_refresh_handler(message: Message) -> None:
             await message.answer("🔄 Events have been refreshed! Use /events to see the updated list.")
     
 
-@dp.message(Command("reminders"))
-async def command_reminders_handler(message: Message) -> None:
-    """Show all reminders set by the user"""
+async def handle_reminders(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for reminders command and callback"""
     user_id = message.from_user.id
     user_reminders = await reminders_repo.get_user_reminders(db, user_id)
     
     if not user_reminders:
-        await message.answer("You don't have any reminders set.")
+        text = "You don't have any reminders set."
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
         return
     
     message_text = "🔔 Your reminders:\n\n"
@@ -330,7 +420,20 @@ async def command_reminders_handler(message: Message) -> None:
                 f"📍 {event['location']}\n\n"
             )
     
-    await message.answer(message_text)
+    if isinstance(message, Message):
+        await message.answer(message_text)
+    else:
+        await message.message.answer(message_text)
+
+@dp.callback_query(F.data.startswith("action_reminders"))
+async def reminders_callback_handler(callback: CallbackQuery) -> None:
+    """Handle reminders button click"""
+    await handle_reminders(callback)
+
+@dp.message(Command("reminders"))
+async def command_reminders_handler(message: Message) -> None:
+    """Handle /reminders command"""
+    await handle_reminders(message)
 
 @dp.callback_query(F.data.startswith("reminder_"))
 async def reminder_callback_handler(callback: CallbackQuery) -> None:
@@ -349,8 +452,10 @@ async def reminder_callback_handler(callback: CallbackQuery) -> None:
         await callback.answer("You already have a reminder set for this event!")
         return
     
-    # Schedule the reminder
-    asyncio.create_task(schedule_reminder(callback.bot, user_id, event))
+    # Schedule the reminder and store the task
+    task = asyncio.create_task(schedule_reminder(callback.bot, user_id, event))
+    task_key = f"reminder_{event_id}_{user_id}"
+    reminder_tasks[task_key] = task
 
     message_text = (
         f"*{event['title']}*\n\n"
@@ -372,12 +477,37 @@ async def reminder_callback_handler(callback: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("remove_reminder_"))
 async def remove_reminder_handler(callback: CallbackQuery) -> None:
     """Handle remove reminder button clicks"""
-
     event_id = callback.data.split("_")[2]
     user_id = callback.from_user.id
     
     try:
+        # Cancel the reminder task if it exists
+        task_key = f"reminder_{event_id}_{user_id}"
+        if task_key in reminder_tasks:
+            task = reminder_tasks[task_key]
+            task.cancel()
+            del reminder_tasks[task_key]
+        
         await reminders_repo.delete_reminder(db, user_id, event_id)
+
+        event = current_events.get(event_id)
+        if event:
+            message_text = (
+                f"*{event['title']}*\n\n"
+                f"📅 {format_event_time(event)}\n"
+                f"📍 {event['location']}\n\n"
+            )
+        
+            url = event.get('url')
+            if url:
+                message_text += f"[Event Link]({url})"
+        # Update the message with the same text but new keyboard (without reminder)
+        await callback.message.edit_text(
+    
+            message_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=create_event_details_keyboard(event_id, False)
+        )
         await callback.answer("Reminder removed!")
     except Exception as e:
         logging.error(f"Error removing reminder: {e}")
@@ -434,30 +564,14 @@ async def schedule_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> No
         
         # Wait for the delay and send reminder
         await task
-        await send_reminder(bot, user_id, event)
+        
+        # check if reminder still exists
+        if await reminders_repo.get_reminder(db, user_id, event['id']):
+            await send_reminder(bot, user_id, event)
                 
     except Exception as e:
         logging.error(f"Error scheduling reminder: {e}")
 
-async def check_reminders(bot: Bot) -> None:
-    """Check for reminders that need to be sent"""
-    while True:
-        try:
-            reminders = await reminders_repo.get_reminders(db)
-            now = datetime.now(pytz.UTC)
-            
-            if reminders:
-                for reminder in reminders:
-                    if reminder['reminder_time'] <= now:
-                        event = current_events.get(reminder['event_id'])
-                    if event:
-                        await send_reminder(bot, reminder['user_id'], event)
-            await asyncio.sleep(60)
-            
-        except Exception as e:
-            logging.error(f"Error checking reminders: {e}")
-            logging.error(f"Reminders: {reminders}")
-            await asyncio.sleep(60)
 
 async def show_books_list(message: Union[Message, CallbackQuery], page: int = 0) -> None:
     """Show list of books with pagination"""
@@ -579,6 +693,10 @@ async def book_instance_select_handler(callback: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("instance_"))
 async def book_instance_handler(callback: CallbackQuery) -> None:
     """Handle book instance selection"""
+    user = await user_repo.get_user(callback.from_user.id)
+    if user['confirm'] == False:
+        await callback.answer("Please confirm your account first. Use /confirm command.", show_alert=True)
+        return
     try:
         # Get instance_id and book_id from callback data
         # Format: book_instance_{instance_id}_{book_id}
@@ -775,9 +893,12 @@ async def command_books_handler(message: Message) -> None:
         logging.error(f"Error in /books command: {e}")
         await message.answer("❌ An error occurred while loading the books. Please try again.")
 
-@dp.message(Command("borrowings"))
-async def command_borrowings_handler(message: Message) -> None:
-    """Handle /borrowings command"""
+async def handle_borrowings(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for borrowings command and callback"""
+    user = await user_repo.get_user(message.from_user.id)
+    if user['confirm'] == False:
+        await message.answer("Please confirm your account first. Use /confirm command.")
+        return
     borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
     
     text = f"You have {len(borrowings)} active borrowings.\n"
@@ -801,20 +922,34 @@ async def command_borrowings_handler(message: Message) -> None:
         elif borrowing['state'] == 'returned':
             text += "✅ Returned\n"
         text +="------------------------------\n"
+
     pending_borrowings = await borrowings_repo.get_user_pending_borrowings(db, message.from_user.id)
     if pending_borrowings:
         m = len(pending_borrowings)
 
-        for i, book in  enumerate(pending_borrowings):
-            text+=f"Book #{book['instance_id']}"
+        for i, book in enumerate(pending_borrowings):
+            text += f"Book #{book['instance_id']}"
             if i < m-1:
-                text+=","
-        if m>1:
-            text+=" are still pending"
+                text += ","
+        if m > 1:
+            text += " are still pending"
         else:
-            text+=" is still pending"
+            text += " is still pending"
     
-    await message.answer(text)
+    if isinstance(message, Message):
+        await message.answer(text)
+    else:
+        await message.message.answer(text)
+
+@dp.callback_query(F.data.startswith("action_borrowings"))
+async def borrowings_callback_handler(callback: CallbackQuery) -> None:
+    """Handle borrowings button click"""
+    await handle_borrowings(callback)
+
+@dp.message(Command("borrowings"))
+async def command_borrowings_handler(message: Message) -> None:
+    """Handle /borrowings command"""
+    await handle_borrowings(message)
 
 @dp.message(Command("admin"))
 async def command_admin_handler(message: Message) -> None:
@@ -846,6 +981,7 @@ async def command_history_handler(message: Message) -> None:
         text+=f"{i+1}. Time: {format_datetime(borrowing['borrow_time'])}, "
         text+=f"Copy #{borrowing['instance_id']}\n"
     await message.answer(text)
+    
 @dp.message(Command("return"))
 async def command_return_handler(message: Message, state: FSMContext) -> None:
     """Handle /return command"""
@@ -891,7 +1027,8 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
             f"✅  Return request sent\n\n"
             f"📚 {borrowing['title']}\n"
             f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
-            f"📖 Copy #{instance_id}\n\n"
+            f"📖 Copy #{instance_id}\n"
+            f"📅 Return by: {format_datetime(borrowing['borrow_return_time'])}\n\n"
             f"Thank you for returning the book! We will check it and approve the return soon."
         )
         
@@ -905,20 +1042,42 @@ async def process_return_book(message: Message, state: FSMContext) -> None:
         await message.answer("❌ An error occurred while processing the return. Please try again.")
         await state.clear()
 
+async def handle_borrow(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
+    """Shared handler for borrow command and callback"""
+    user = await user_repo.get_user(message.from_user.id)
+    if user['confirm'] == False:
+        text = "Please confirm your account first. Use /confirm command."
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
+        return
+
+    borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
+    if len(borrowings) >= 3:
+        text = "❌ You have reached the maximum number of borrowings (3)"
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
+        return
+
+    text = "📚 Please enter the instance ID of the book you want to borrow.\nYou can find the instance ID on the book cover"
+    if isinstance(message, Message):
+        await message.answer(text)
+    else:
+        await message.message.answer(text)
+    await state.set_state(BorrowState.SELECT_INSTANCE)
+
+@dp.callback_query(F.data.startswith("action_borrow"))
+async def borrow_callback_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle borrow button click"""
+    await handle_borrow(callback, state)
+
 @dp.message(Command("borrow"))
 async def command_borrow_handler(message: Message, state: FSMContext) -> None:
     """Handle /borrow command"""
-    # Check if user has reached borrowing limit
-    borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
-    if len(borrowings) >= 3:
-        await message.answer("❌ You have reached the maximum number of borrowings (3)")
-        return
-
-    await message.answer(
-        "📚 Please enter the instance ID of the book you want to borrow.\n"
-        "You can find the instance ID on the book cover"
-    )
-    await state.set_state(BorrowState.SELECT_INSTANCE)
+    await handle_borrow(message, state)
 
 @dp.message(BorrowState.SELECT_INSTANCE)
 async def process_instance_selection(message: Message, state: FSMContext) -> None:
@@ -931,7 +1090,7 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         if not instance:
             await message.answer("❌ Instance not found. Try again or use /cancel", show_alert=True)
             return
-            
+        
         if not instance['available']:
             await message.answer("❌ This copy is not available. Try again or use /cancel", show_alert=True)
             return
@@ -940,8 +1099,6 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
             await message.answer("Borrowing process cancelled")
             await state.clear()
             return
-        
-        # Check if user has already borrowed this book
         
         # Create borrowing record
         borrow_id = await borrowings_repo.create_borrowing(db, message.from_user.id, instance_id)
@@ -966,10 +1123,7 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
             f"Back to library /books"
         )
     
-        
-        await message.answer(
-            success_message,
-        )
+        await message.answer(success_message)
         await state.clear()
         
     except ValueError:
@@ -978,6 +1132,111 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         logging.error(f"Error in process_instance_selection: {e}")
         await message.answer("❌ An error occurred while booking the copy. Please try again.")
         await state.clear()
+
+async def handle_return(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
+    """Shared handler for return command and callback"""
+    borrowings = await borrowings_repo.get_user_borrowings(db, message.from_user.id)
+    if not borrowings:
+        text = "You have no borrowings."
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
+        return
+    
+    text = "📚 Please select the book you want to return:"
+    if isinstance(message, Message):
+        await message.answer(text, reply_markup=create_return_keyboard(borrowings))
+    else:
+        await message.message.answer(text, reply_markup=create_return_keyboard(borrowings))
+    await state.set_state(BorrowState.RETURN_BOOK)
+
+@dp.callback_query(F.data.startswith("action_return"))
+async def return_callback_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle return button click"""
+    await handle_return(callback, state)
+
+@dp.message(Command("return"))
+async def command_return_handler(message: Message, state: FSMContext) -> None:
+    """Handle /return command"""
+    await handle_return(message, state)
+
+@dp.message(BorrowState.RETURN_BOOK)
+async def process_return_book(message: Message, state: FSMContext) -> None:
+    """Process book return by instance ID"""
+    try:
+        # Extract instance ID from "Copy #id" format
+        instance_id = int(message.text.strip().split('#')[1])
+        
+        # Check if the instance exists and is currently borrowed
+        borrowing = await borrowings_repo.get_borrowing_by_instance(db, instance_id)
+        
+        if not borrowing:
+            await message.answer("❌ This book is not currently borrowed. Return process failed.")
+            await state.clear()
+            return
+            
+        if borrowing['user_id'] != message.from_user.id:
+            await message.answer("❌ You don't borrow this book. Return process failed.")
+            await state.clear()
+            return
+        if borrowing['state'] == 'pending':
+            await message.answer("❌ This book is already pending. Return process failed.")
+            await state.clear()
+            return
+            
+        # Update borrowing state to returned
+        await borrowings_repo.update_borrowing_state(db, borrowing['borrow_id'], 'pending')
+
+        success_message = (
+            f"✅  Return request sent\n\n"
+            f"📚 {borrowing['title']}\n"
+            f"👤 Author: {borrowing.get('author', 'Unknown')}\n"
+            f"📖 Copy #{instance_id}\n"
+            f"📅 Return by: {format_datetime(borrowing['borrow_return_time'])}\n\n"
+            f"Thank you for returning the book! We will check it and approve the return soon."
+        )
+        
+        await message.answer(success_message)
+        await state.clear()
+        
+    except (ValueError, IndexError):
+        await message.answer("❌ Please select a book from the keyboard or enter a valid instance ID (number).")
+    except Exception as e:
+        logging.error(f"Error in process_return_book: {e}")
+        await message.answer("❌ An error occurred while processing the return. Please try again.")
+        await state.clear()
+
+async def handle_history(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for history command and callback"""
+    borrowings = await borrowings_repo.get_user_borrowings_history(db, message.from_user.id)
+    if not borrowings:
+        text = "You have no borrowings."
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.answer(text)
+        return
+
+    text = "Your borrowing history:\n"
+    for i, borrowing in enumerate(borrowings):
+        text += f"{i+1}. Time: {format_datetime(borrowing['borrow_time'])}, "
+        text += f"Copy #{borrowing['instance_id']}\n"
+    
+    if isinstance(message, Message):
+        await message.answer(text)
+    else:
+        await message.message.answer(text)
+
+@dp.callback_query(F.data.startswith("action_history"))
+async def history_callback_handler(callback: CallbackQuery) -> None:
+    """Handle history button click"""
+    await handle_history(callback)
+
+@dp.message(Command("history"))
+async def command_history_handler(message: Message) -> None:
+    """Handle /history command"""
+    await handle_history(message)
 
 @dp.message(Command("refresh_books"))   
 async def command_refresh_books_handler(message: Message) -> None:
@@ -1006,12 +1265,22 @@ async def command_check_handler(message: Message) -> None:
             f"📚 List of pending borrowings (Page 1):",
             reply_markup=create_pending_borrowings_keyboard(pending_borrowings, 0)
         )
+async def handle_open(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for open command and callback"""
+    text = "In the future, this command will notify us that we need to open the Startup Sauna door."
+    if isinstance(message, Message):
+        await message.answer(text)
+    else:
+        await message.message.answer(text)
 
+@dp.callback_query(F.data.startswith("action_open_sauna"))
+async def open_callback_handler(callback: CallbackQuery) -> None:
+    """Handle open button click"""
+    await handle_open(callback)
 @dp.message(Command("open"))
 async def command_open_handler(message: Message) -> None:
     """Handle /open command"""
-    await message.answer("In the future, this comand will notify us that we need to open the Startup Sauna door.")
-
+    await handle_open(message)
 
 async def get_pending_borrowings(force_refresh: bool = False):
     global pending_borrowings
@@ -1056,6 +1325,7 @@ async def pending_borrowing_handler(callback: CallbackQuery) -> None:
     await callback.message.edit_text(text, reply_markup=create_approve_borrowing_keyboard(borrowing_id, page))
 
 
+
 @dp.callback_query(F.data.startswith("state_borrowing_"))
 async def state_borrowing_handler(callback: CallbackQuery, bot: Bot) -> None:
     """Handle borrowing state button clicks"""
@@ -1083,11 +1353,42 @@ async def state_borrowing_handler(callback: CallbackQuery, bot: Bot) -> None:
     else:
         await callback.message.edit_text("No pending borrowings")
 
+@dp.message(Command("menu"))
+async def command_actions_handler(message: Message) -> None:
+    """Handle /menu command"""
+    keyboard = create_actions_keyboard(0)
+    user = await user_repo.get_user(message.from_user.id)
+    name = user['name'] if user['name'] else "@"+user['username']
+    await message.answer(f"Hello, {name}! What do you want to do?", reply_markup=keyboard)
 
 
-@dp.message(Command("apply"))       
-async def command_apply_handler(message: Message, state: FSMContext) -> None:
-    """Handle /apply command for Startup Sauna access request"""
+@dp.callback_query(F.data.startswith("actions_page_"))
+async def actions_page_handler(callback: CallbackQuery) -> None:
+    """Handle actions pagination"""
+    try:
+        page = int(callback.data.split("_")[2])
+        await callback.message.edit_text(
+            "What do you want to do?",
+            reply_markup=create_actions_keyboard(page)
+        )
+    except Exception as e:
+        logging.error(f"Error in actions_page_handler: {e}")
+        await callback.answer("An error occurred while changing pages", show_alert=True)
+
+async def handle_apply(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
+    """Shared handler for apply command and callback"""
+    if isinstance(message, Message):
+        user = await user_repo.get_user(message.from_user.id)
+    else:
+        user = await user_repo.get_user(message.from_user.id)
+
+    if user['confirm'] == False:
+        if isinstance(message, Message):
+            await message.answer("Please confirm your account first. Use /confirm command.", show_alert=True)
+        else:
+            await message.message.answer("Please confirm your account first. Use /confirm command.", show_alert=True)
+        return
+
     # Check if user already has a pending request
     user_requests = await requests_repo.get_user_active_requests(db, message.from_user.id)
     user_access = await requests_repo.get_user_access(db, message.from_user.id)
@@ -1095,15 +1396,27 @@ async def command_apply_handler(message: Message, state: FSMContext) -> None:
     global document_file_id
 
     if user_access:
-        await message.answer(
-            "❌ You already have Startup Sauna access. Check your access status with /access"
-        )
+        if isinstance(message, Message):
+            await message.answer(
+                "❌ You already have Startup Sauna access. Check your access status with /access"
+            )
+        else:
+            await message.message.answer(
+                "❌ You already have Startup Sauna access. Check your access status with /access"
+            )
         return
+
     if user_requests:
-        await message.answer(
-            "❌ You already have a pending request for Startup Sauna access. "
-            "Please wait for it to be reviewed before submitting a new one."
-        )
+        if isinstance(message, Message):
+            await message.answer(
+                "❌ You already have a pending request for Startup Sauna access. "
+                "Please wait for it to be reviewed before submitting a new one."
+            )
+        else:
+            await message.message.answer(
+                "❌ You already have a pending request for Startup Sauna access. "
+                "Please wait for it to be reviewed before submitting a new one."
+            )
         return
     
     try:
@@ -1111,27 +1424,59 @@ async def command_apply_handler(message: Message, state: FSMContext) -> None:
         keyboard = create_apply_keyboard()
         if document_file_id:
             # Use cached file_id
-            await message.answer_document(
-                document=document_file_id,
-                caption=text,
-                reply_markup=keyboard
-            )
+            if isinstance(message, Message):
+                await message.answer_document(
+                    document=document_file_id,
+                    caption=text,
+                    reply_markup=keyboard
+                )
+            else:
+                await message.message.answer_document(
+                    document=document_file_id,
+                    caption=text,
+                    reply_markup=keyboard
+                )
         else:
             # First time sending the document
-            sent_message = await message.answer_document(
-                document=FSInputFile("temp/Access to Startup Sauna.pdf"),
-                caption=text,
-                reply_markup=keyboard
-            )
-            # Store the file_id for future use
-            document_file_id = sent_message.document.file_id
+            if isinstance(message, Message):
+                sent_message = await message.answer_document(
+                    document=FSInputFile("temp/Access to Startup Sauna.pdf"),
+                    caption=text,
+                    reply_markup=keyboard
+                )
+                # Store the file_id for future use
+                document_file_id = sent_message.document.file_id
+            else:
+                sent_message = await message.message.answer_document(
+                    document=FSInputFile("temp/Access to Startup Sauna.pdf"),
+                    caption=text,
+                    reply_markup=keyboard
+                )
+                # Store the file_id for future use
+                document_file_id = sent_message.document.file_id
         
     except Exception as e:
         logging.error(f"Error sending document: {e}")
-        await message.answer(
-            "❌ An error occurred while sending the document. "
-            "Please try again later."
-        )
+        if isinstance(message, Message):
+            await message.answer(
+                "❌ An error occurred while sending the document. "
+                "Please try again later."
+            )
+        else:
+            await message.message.answer(
+                "❌ An error occurred while sending the document. "
+                "Please try again later."
+            )
+
+@dp.callback_query(F.data.startswith("action_apply"))
+async def apply_callback_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle apply button click"""
+    await handle_apply(callback, state)
+
+@dp.message(Command("apply"))       
+async def command_apply_handler(message: Message, state: FSMContext) -> None:
+    """Handle /apply command"""
+    await handle_apply(message, state)
 
 @dp.callback_query(F.data.startswith("apply"))
 async def process_apply(callback: CallbackQuery, state: FSMContext) -> None:
@@ -1234,7 +1579,7 @@ async def request_handler(callback: CallbackQuery, bot: Bot) -> None:
         await bot.send_message(request['user_id'], f"Admin saw your request for Startup Sauna access.")
         await requests_repo.update_request_state(db, request_id, 'pending')
     user = await user_repo.get_user(request['user_id'])
-    text = f"Request ID: {request['request_id']}\nUser: @{user['username']}\nMotivation: \n{request['motivation']}"
+    text = f"Request ID: {request['request_id']}\nName: {user['name']}\nUsername: @{user['username']}\n\nMotivation: \n{request['motivation']}"
     await callback.message.edit_text(text, reply_markup=create_approve_request_keyboard(request_id, page))
 
 @dp.callback_query(F.data.startswith("change_request_state_"))
@@ -1254,32 +1599,50 @@ async def change_request_state(callback: CallbackQuery, bot: Bot) -> None:
     current_requests, (pending, applied) = await get_requests(force_refresh=True)
     await callback.message.edit_text(f"Current pending requests: {pending}\nNew application requests: {applied}", reply_markup=create_requests_keyboard(current_requests))
 
-@dp.message(Command("access"))
-async def command_access_handler(message: Message) -> None:
-    """Handle /access command for users"""
+async def handle_access(message: Union[Message, CallbackQuery]) -> None:
+    """Shared handler for access command and callback"""
     admin = await user_repo.get_user(message.from_user.id)
     if admin['role'] != 'admin':
         user = await requests_repo.get_user_last_request(db, message.from_user.id)
         if user['state'] == 'approved':
-            await message.answer(f"You have access to Startup Sauna. Your secret word is \n\n*{user['secret_word']}*", parse_mode=ParseMode.MARKDOWN)
+            text = f"You have access to Startup Sauna. Your secret word is \n\n*{user['secret_word']}*"
         elif user['state'] == 'applied':
-            await message.answer("Admin haven't seen your request yet.")
+            text = "Admin haven't seen your request yet."
         elif user['state'] == 'pending':
-            await message.answer("Admin has seen your request. Please wait for it to be reviewed.")
+            text = "Admin has seen your request. Please wait for it to be reviewed."
         elif user['state'] == 'rejected':
-            await message.answer("Your request was rejected. Please try again later.")
+            text = "Your request was rejected. Please try again later."
         else:
-            await message.answer("You do not have access to Startup Sauna and have no pending requests.")
+            text = "You do not have access to Startup Sauna and have no pending requests."
+
+        if isinstance(message, Message):
+            await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await message.message.answer(text, parse_mode=ParseMode.MARKDOWN)
     else:
         users = await get_users_with_access(force_refresh=True)
         if not users:
-            await message.answer("No users with access")
+            if isinstance(message, Message):
+                await message.answer("No users with access")
+            else:
+                await message.message.answer("No users with access")
         else:
             text = "Users with access (Page 1)"
             keyboard = create_users_keyboard(users)
-            await message.answer(text, reply_markup=keyboard)
+            if isinstance(message, Message):
+                await message.answer(text, reply_markup=keyboard)
+            else:
+                await message.message.answer(text, reply_markup=keyboard)
 
+@dp.callback_query(F.data.startswith("action_access"))
+async def access_callback_handler(callback: CallbackQuery) -> None:
+    """Handle access button click"""
+    await handle_access(callback)
 
+@dp.message(Command("access"))
+async def command_access_handler(message: Message) -> None:
+    """Handle /access command"""
+    await handle_access(message)
 
 @dp.callback_query(F.data.startswith("user_"))
 async def user_handler(callback: CallbackQuery) -> None:
@@ -1289,7 +1652,7 @@ async def user_handler(callback: CallbackQuery) -> None:
     user = await user_repo.get_user(user_id)
     request = await requests_repo.get_user_access(db, user_id)
     keyboard = create_update_user_keyboard(user, page)
-    await callback.message.edit_text(f"User: @{user['username']}\nSecret word: {request['secret_word']}\nJoined at: {format_datetime(user['created_at'])}", reply_markup=keyboard)
+    await callback.message.edit_text(f"Name: {user['name']}\nUsername: @{user['username']}\nSecret word: {request['secret_word']}\nJoined at: {format_datetime(user['created_at'])}", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("suspend_access_"))
 async def suspend_access(callback: CallbackQuery, bot: Bot) -> None:
@@ -1326,6 +1689,39 @@ async def users_page_handler(callback: CallbackQuery) -> None:
         logging.error(f"Error in users_page_handler: {e}")
         await callback.answer("An error occurred while changing pages", show_alert=True)
 
+async def handle_change_name(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
+    """Shared handler for change name command and callback"""
+    text = "Please send your new full name. Example: John Doe\n\nYou can also send /cancel to cancel the name change."
+    if isinstance(message, Message):
+        await message.answer(text)
+    else:
+        await message.message.answer(text)
+    await state.set_state(ChangeNameState.NEW_NAME)
+
+@dp.callback_query(F.data.startswith("action_change_name"))
+async def change_name_callback_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle change name button click"""
+    await handle_change_name(callback, state)
+
+@dp.message(Command("change_name"))
+async def command_change_name_handler(message: Message, state: FSMContext) -> None:
+    """Handle /change_name command"""
+    await handle_change_name(message, state)
+
+@dp.message(ChangeNameState.NEW_NAME)
+async def process_new_name(message: Message, state: FSMContext) -> None:
+    """Process the new name state"""
+    if message.text == "/cancel":
+        await message.answer("Name change cancelled.")
+        await state.clear()
+    else:
+        name = message.text
+        await message.answer(f"Your full name is set to {name}.")
+        await user_repo.update_user(message.from_user.id, name=name)
+        await state.clear()
+
+
+
 async def main() -> None:
     
     # Initialize Bot instance with default bot properties which will be passed to all API calls
@@ -1338,12 +1734,32 @@ async def main() -> None:
     await books_repo.init(db)
     await borrowings_repo.init(db)
     await requests_repo.init(db)
+
+    # Initialize events
+    global current_events
+    await refresh_events()
+    if current_events:
+        logging.info(f"Events refreshed at {datetime.now()}")
+
+    # Initialize reminder tasks for all existing reminders
+    global reminder_tasks
+   
+    #delete unnecessary reminders that are expired
+    all_reminders = await reminders_repo.get_reminders(db)
+    for reminder in all_reminders:
+        if reminder['reminder_time'].astimezone(pytz.utc) < datetime.now().astimezone(pytz.utc):
+            await reminders_repo.delete_reminder(db, reminder['user_id'], reminder['event_id'])
+        else:
+            event = current_events.get(reminder['event_id'])
+            if event:
+                task = asyncio.create_task(schedule_reminder(bot, reminder['user_id'], event))
+                task_key = f"reminder_{event['id']}_{reminder['user_id']}"
+                reminder_tasks[task_key] = task
+                logging.info(f"Initialized reminder task for event {event['id']} and user {reminder['user_id']}")
     
     # Start periodic events refresh
     asyncio.create_task(periodic_events_refresh())
     
-    # Start reminders checker
-    asyncio.create_task(check_reminders(bot))
     asyncio.create_task(update_overdue_borrowings(bot))
     asyncio.create_task(send_overdue_notification(bot))
     

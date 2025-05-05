@@ -12,7 +12,8 @@ class UserRepository:
                     username TEXT,
                     name TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    role TEXT DEFAULT 'user'
+                    role TEXT DEFAULT 'user',
+                    confirm BOOLEAN DEFAULT FALSE
                 )
             """)
             logging.info("User table initialized")
@@ -35,7 +36,29 @@ class UserRepository:
         except Exception as e:
             logging.error(f"Failed to save user: {e}")
             return False
-        
+    
+    async def update_user(self, user_id: int, **kwargs):
+        """Update a user"""
+        try:
+            update_fields = []
+            values = []
+            param_count = 1
+            
+            for key, value in kwargs.items():
+                update_fields.append(f"{key} = ${param_count}")
+                values.append(value)
+                param_count += 1
+            
+            values.append(user_id)  # Add user_id as the last parameter
+            update_fields = ", ".join(update_fields)
+            
+            query = f"UPDATE tg_user SET {update_fields} WHERE id = ${param_count}"
+            await self.db.execute(query, *values)
+            return True
+        except Exception as e:
+            logging.error(f"Failed to update user: {e}")
+            return False
+    
     async def get_admins(self):
         """Get all admins"""
         try:

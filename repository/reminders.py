@@ -35,7 +35,6 @@ class RemindersRepository:
         """Get all active reminders"""
         return await db.fetch(f"""
             SELECT * FROM {self.table_name}
-            WHERE reminder_time > CURRENT_TIMESTAMP
             ORDER BY reminder_time ASC
         """)
     
