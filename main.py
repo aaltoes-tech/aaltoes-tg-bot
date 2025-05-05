@@ -562,14 +562,8 @@ async def schedule_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> No
         # Calculate delay in seconds
         delay = (reminder_time - now).total_seconds()
         
-        # Create and store the reminder task
-        task = asyncio.create_task(
-            asyncio.sleep(delay),
-            name=f"reminder_{event['id']}_{user_id}"
-        )
-        
         # Wait for the delay and send reminder
-        await task
+        await asyncio.sleep(delay)
         
         # check if reminder still exists
         if await reminders_repo.get_reminder(db, user_id, event['id']):
@@ -1796,6 +1790,8 @@ async def main() -> None:
                 task_key = f"reminder_{event['id']}_{reminder['user_id']}"
                 reminder_tasks[task_key] = task
                 logging.info(f"Initialized reminder task for event {event['id']} and user {reminder['user_id']}")
+            else:
+                await reminders_repo.delete_reminder(db, reminder['user_id'], reminder['event_id'])
     
     # Create periodic tasks
     periodic_tasks = [
