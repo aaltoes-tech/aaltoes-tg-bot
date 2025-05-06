@@ -44,6 +44,7 @@ current_events: Dict[str, Dict] = {}
 EVENTS_CACHE_DURATION = timedelta(hours=0.5)
 OVERDUE_CHECK_INTERVAL = timedelta(hours=1)
 OVERDUE_NOTIFICATION_INTERVAL = timedelta(hours=12)
+TIME_REMINDER_INTERVAL = timedelta(days=1)
 pending_borrowings: List[Dict] = []
 users_with_access: List[Dict] = []
 current_books: List[Dict] = []
@@ -510,7 +511,7 @@ async def schedule_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> No
     try:
         # Calculate time until reminder (1 hour before event)
         now = datetime.now(pytz.UTC)
-        reminder_time = event['start_time'] - timedelta(hours=1)
+        reminder_time = event['start_time'] - TIME_REMINDER_INTERVAL
         
         if reminder_time <= now:
             # If event is less than 1 hour away, send reminder immediately
@@ -1059,9 +1060,15 @@ async def command_borrow_handler(message: Message, state: FSMContext) -> None:
 @dp.message(BorrowState.SELECT_INSTANCE)
 async def process_instance_selection(message: Message, state: FSMContext) -> None:
     """Process instance selection for borrowing"""
-    try:
-        instance_id = int(message.text.strip())
+    if message.text.strip() == "/cancel":
+            await message.answer("Borrowing process cancelled")
+            await state.clear()
+            return
         
+    try:
+        
+        instance_id = int(message.text.strip())
+
         # Get instance details
         instance = await books_repo.get_instance_by_id(db, instance_id)
         if not instance:
@@ -1072,10 +1079,6 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
             await message.answer("❌ This copy is not available. Try again or use /cancel", show_alert=True)
             return
         
-        if instance['book_id'] == "/cancel":
-            await message.answer("Borrowing process cancelled")
-            await state.clear()
-            return
         
         # Create borrowing record
         borrow_id = await borrowings_repo.create_borrowing(db, message.from_user.id, instance_id)
@@ -1104,10 +1107,10 @@ async def process_instance_selection(message: Message, state: FSMContext) -> Non
         await state.clear()
         
     except ValueError:
-        await message.answer("❌ Please enter a valid instance ID (number).")
+        await message.answer("❌ Please enter a valid instance ID (number). Or /cancel")
     except Exception as e:
         logging.error(f"Error in process_instance_selection: {e}")
-        await message.answer("❌ An error occurred while booking the copy. Please try again.")
+        await message.answer("❌ An error occurred while booking the copy. Please try again. Or /cancel")
         await state.clear()
 
 async def handle_return(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
@@ -1747,7 +1750,9 @@ async def main() -> None:
     #delete unnecessary reminders that are expired
     all_reminders = await reminders_repo.get_reminders(db)
     for reminder in all_reminders:
-        if reminder['reminder_time'].astimezone(pytz.utc) < datetime.now().astimezone(pytz.utc):
+        event = current_events.get(reminder['event_id'])
+
+        if event['start_time'].astimezone(pytz.utc) < datetime.now().astimezone(pytz.utc):
             await reminders_repo.delete_reminder(db, reminder['user_id'], reminder['event_id'])
         else:
             event = current_events.get(reminder['event_id'])
