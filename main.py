@@ -13,6 +13,8 @@ from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from settings import phrases, info_message, help_message
+from random import choice
 
 from settings import settings
 from db import db
@@ -190,33 +192,6 @@ async def command_start_handler(message: Message) -> None:
 
 async def handle_help(message: Union[Message, CallbackQuery]) -> None:
     """Shared handler for help command and callback"""
-    help_message = "🤖 *Aaltoes Community Bot Help*\n\n"
-    
-    help_message += "📱 *Main Commands*\n"
-    help_message += "/menu \- Open main menu with all actions\n"
-    help_message += "/help \- Show this help message\n"
-    help_message += "/info \- Show information about Aaltoes\n\n"
-    
-    help_message += "📚 *Library Commands*\n"
-    help_message += "/books \- Browse available books\n"
-    help_message += "/borrow \- Borrow a book\n"
-    help_message += "/return \- Return a book\n"
-    help_message += "/borrowings \- View your current borrowings\n"
-    help_message += "/history \- View your borrowing history\n\n"
-    
-    help_message += "🚪 *Startup Sauna Access*\n"
-    help_message += "/apply \- Apply for Startup Sauna access\n"
-    help_message += "/access \- Check your access status\n"
-    help_message += "/confirm \- Verify your account\n\n"
-    
-    help_message += "📅 *Events & Reminders*\n"
-    help_message += "/events \- View upcoming events\n"
-    help_message += "/reminders \- View your reminders\n\n"
-    
-    help_message += "👤 *Profile*\n"
-    help_message += "/change\_name \- Update your name\n\n"
-    
-    help_message += "💡 *Tip*: Use /menu for quick access to all features"
 
     if isinstance(message, Message):
         await message.answer(help_message, parse_mode=ParseMode.MARKDOWN_V2)
@@ -238,22 +213,6 @@ async def command_info_handler(message: Message) -> None:
     """
     This handler receives messages with `/info` command
     """
-    info_message = (
-        "🌟 *About Aaltoes*\n\n"
-        "Aaltoes (Aalto Entrepreneurship Society) is the largest student-run entrepreneurship community in Northern Europe. "
-        "We are a non-profit organization that helps students and young professionals to develop their entrepreneurial skills "
-        "and build their own businesses.\n\n"
-        "*Connect with us:*\n"
-        "Website: [aaltoes.com](https://aaltoes.com)\n"
-        "Instagram: [@aaltoes](https://www.instagram.com/aaltoes/)\n"
-        "LinkedIn: [Aaltoes](https://www.linkedin.com/company/aaltoes/)\n"
-        "Facebook: [Aaltoes](https://www.facebook.com/aaltoes/)\n"
-        "Twitter: [@Aaltoes](https://twitter.com/Aaltoes)\n"
-        "Telegram: [@aaltoes](https://t.me/aaltoes)\n\n"
-        "📍 *Location:*\n"
-        "Aaltoes Startup Sauna\n"
-        "Puumiehenkuja 5, 02150 Espoo"
-    )
     await message.answer(info_message, parse_mode=ParseMode.MARKDOWN)
     await message.answer_location(60.18785632704554, 24.823863548762827)
 
@@ -1754,6 +1713,11 @@ async def process_new_name(message: Message, state: FSMContext) -> None:
         await user_repo.update_user(message.from_user.id, name=name)
         await state.clear()
 
+
+@dp.message()
+async def handle_unknown_message(message: Message) -> None:
+    """Handle unknown messages"""
+    await message.answer(choice(phrases))
 
 
 async def main() -> None:
