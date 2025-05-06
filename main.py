@@ -368,12 +368,14 @@ async def handle_reminders(message: Union[Message, CallbackQuery]) -> None:
             await message.message.answer(text)
         return
     
-    message_text = "🔔 Your reminders:\n\n"
+    message_text = "🔔 Your reminders\n\n"
     for reminder in user_reminders:
+        logging.info(f"Reminder: {reminder_tasks['reminder_' + str(reminder['event_id']) + '_' + str(user_id)]}")
         event = current_events.get(reminder['event_id'])
         if event:
             reminder_time = reminder['reminder_time'].astimezone(pytz.timezone('Europe/Helsinki'))
             message_text += (
+                "-----------------------------------\n"
                 f"📅 {event['title']}\n"
                 f"⏰ Reminder at: {reminder_time.strftime('%d %b %Y, %H:%M')}\n"
                 f"📍 {event['location']}\n\n"

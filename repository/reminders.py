@@ -48,6 +48,6 @@ class RemindersRepository:
     async def get_user_reminders(self, db, user_id: int) -> List[Dict[str, Any]]:
         """Get all reminders for a specific user"""
         return await db.fetch(
-            f"SELECT * FROM {self.table_name} WHERE user_id = $1",
+            f"SELECT * FROM {self.table_name} WHERE user_id = $1 ORDER BY reminder_time ASC",
             user_id
         ) 
