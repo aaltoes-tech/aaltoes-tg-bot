@@ -28,9 +28,11 @@ from repository.user import UserRepository
 from repository.events import EventsRepository
 from repository.reminders import RemindersRepository
 from repository.books import BooksRepository
+from repository.points import PointsRepository
 from repository.borrowings import BorrowingsRepository
 from repository.requests import RequestsRepository
-from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard, create_actions_keyboard, create_task_keyboard
+from repository.points_requests import PointsRequestsRepository
+from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard, create_actions_keyboard, create_task_keyboard, create_points_requests_keyboard, create_approve_points_request_keyboard
 from upstash_redis import Redis
 
 
@@ -40,9 +42,11 @@ user_repo = UserRepository()
 events_repo = EventsRepository(api_key=settings.LUMA_API_KEY)
 reminders_repo = RemindersRepository()
 books_repo = BooksRepository()
+
 borrowings_repo = BorrowingsRepository()
 requests_repo = RequestsRepository()
-
+points_requests_repo = PointsRequestsRepository()
+points_repo = PointsRepository()
 # Initialize storage
 storage = MemoryStorage()
 
@@ -201,6 +205,17 @@ async def get_linear_token():
         logging.error(f"Unexpected error getting Linear token: {e}")
         return None
 
+def format_priority(priority: int) -> str:
+    """Format priority with emoji and text"""
+    priority_map = {
+        0: "🔵 No Priority",
+        1: "🔴 Urgent",
+        2: "🟠 High",
+        3: "🟡 Medium",
+        4: "🟢 Low"
+    }
+    return priority_map.get(priority, "⚪ Unknown")
+
 async def get_issue_by_id(team: str, number: str):
     """
     Load Linear issues with pagination
@@ -250,18 +265,26 @@ async def get_issue_by_id(team: str, number: str):
         edge = edges[0]
         node = edge["node"]
         
+        # Parse due date if it exists
+        due_date = None
+        if node.get("dueDate"):
+            try:
+                due_date = datetime.fromisoformat(node["dueDate"].replace('Z', '+00:00'))
+            except Exception as e:
+                logging.error(f"Error parsing due date: {e}")
+        
         return {
             "id": node.get("id"),
-            "number": node.get("number") or "No Number",
+            "number": node.get("number", "No Number"),
             "title": node.get("title") or "No Title",
             "description": node.get("description") or "No Description",
-            "points": str(node.get("estimate") or "1"),
+            "points": str(node.get("estimate", 1)),
             "team": node.get("team", {}).get("name") or "No Team",
-            "labels": [label.get("name") for label in node.get("labels", {}).get("nodes", [])],
-            "due_date": node.get("dueDate") or "No Due Date",
+            "labels": [label.get("name") for label in node.get("labels", {}).get("nodes", [])] if node.get("labels", {}).get("nodes") else [],
+            "due_date": due_date,
             "created_at": node.get("createdAt") or "No Created At",
-            "priority": node.get("priority") or "No Priority",
-            "project": node.get("project", {}).get("name") or "No Project",
+            "priority": node.get("priority", 0),  # Keep raw priority value
+            "project": node.get("project", {}) if node.get("project") else "No Project",
             "state": node.get("state", {}).get("name") or "No State"
         }
     except Exception as e:
@@ -321,6 +344,12 @@ async def command_info_handler(message: Message) -> None:
 async def handle_confirm(message: Union[Message, CallbackQuery], state: FSMContext) -> None:
     """Shared handler for confirm command and callback"""
     user = await user_repo.get_user(message.from_user.id)
+    if not user:
+        user = await user_repo.save_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.full_name
+    )
     if user['confirm'] == False:
         text = "Please send your full name to confirm your account. Example: John Doe\n\nYou can also send /cancel to cancel the confirmation."
         if isinstance(message, Message):
@@ -1583,11 +1612,11 @@ async def process_apply(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ApplyState.MOTIVATION)
 
 @dp.message(ApplyState.MOTIVATION)
-async def process_motivation(message: Message, state: FSMContext) -> None:
-    """Process the motivation for Startup Sauna access"""
+async def process_motivation(message: Message, state: FSMContext, bot: Bot) -> None:
+    """Process the motivation state"""
     if message.text == "/cancel":
+        await message.answer("Claim cancelled.")
         await state.clear()
-        await message.answer("Application cancelled.")
         return
     
     logging.info(f"Motivation: {message.text}")
@@ -1818,52 +1847,6 @@ async def process_new_name(message: Message, state: FSMContext) -> None:
         await user_repo.update_user(message.from_user.id, name=name)
         await state.clear()
 
-@dp.callback_query(F.data.startswith("helper"))
-async def linear_handler(callback: CallbackQuery) -> None:
-   """Handle /helper command"""
-   await callback.message.edit_text("Thank you for your interest to help us. Please choose a category with which you want to help us.", reply_markup=create_helper_keyboard())
-
-
-@dp.message(Command("helper"))
-async def command_helper_handler(message: Message) -> None:
-    """Handle /helper command"""
-    await message.answer("You can find list of issues on the website. /claim <issue_id> to claim an issue.", reply_markup=create_helper_keyboard())
-
-@dp.callback_query(F.data.startswith("issue_"))
-async def linear_issue_handler(callback: CallbackQuery) -> None:
-    """Handle Linear issue selection"""
-    # Parse callback data: issue_label_issueRef
-    parts = callback.data.split("_")
-    label = parts[1]
-    team = parts[2]
-    number = parts[3]
-
-    issue = await get_issue_by_id(team, number)
-    
-    if issue:
-        # Format issue details
-        details = (
-            f"*{issue['issue_name']}*\n"
-            f"Title: {issue['title']}\n"
-            f"State: {issue['state']}\n"
-            f"Points: {issue['points']}\n"
-            f"Priority: {issue['priority']}\n"
-            f"Project: {issue['project']}\n"
-            f"Due Date: {issue['due_date']}\n"
-            f"Created: {issue['created_at']}\n"
-            f"Labels: {', '.join(issue['labels'])}\n"
-            f"Description: {issue['description']}"
-        )
-        
-        # Create keyboard to go back to issues list
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Back to Issues", callback_data=f"linear_{label}_current_None")]
-        ])
-        
-        await callback.message.edit_text(details, reply_markup=keyboard, parse_mode="Markdown")
-    else:
-        await callback.answer("Issue not found", show_alert=True)
-
 
 @dp.callback_query(F.data.startswith("task_"))
 async def command_task_handler(callback: CallbackQuery, state: FSMContext) -> None:
@@ -1878,28 +1861,36 @@ async def command_task_handler(callback: CallbackQuery, state: FSMContext) -> No
         await callback.message.edit_text(f"❌ Issue {team}-{number} not found.")
         return
 
+    # Parse dates for formatting
+    due_date = issue.get('due_date')
     # Format issue details
     details = (
-        f"*{issue['team']}-{issue['number']}*\n\n"
-        f"📋 Title: {issue['title']}\n"
-        f"📊 State: {issue['state']}\n"
-        f"🎯 Points: {issue['points']}\n"
-        f"⚡ Priority: {issue['priority']}\n"
-        f"📁 Project: {issue['project']}\n"
-        f"📅 Due Date: {issue['due_date']}\n"
-        f"🕒 Created: {issue['created_at']}\n"
-        f"🏷️ Labels: {', '.join(issue['labels'])}\n\n"
-        f"📝 Description:\n{issue['description']}"
+        f"*{issue['team']}-{issue['number']}  {issue['title']} ({issue['points']} pts)*\n\n"
+        f"{format_priority(issue['priority'])}\n"
+        f"📅 Due Date: {format_datetime(due_date) if due_date else 'No Due Date'}\n"
+        f"📁 Project: {issue['project']} ({', '.join(issue['labels'])})\n\n"
+        f"{issue['description']}"
     )
     
     await callback.message.edit_text(details, parse_mode="Markdown", reply_markup=create_task_keyboard(issue))
-
-
 
 @dp.message(Command("task"))
 async def command_task_handler(message: Message) -> None:
     """Handle /task command to show Linear issue information"""
     # Get the issue ID from the command arguments
+
+    user = await user_repo.get_user(message.from_user.id)
+    if not user:
+        user = await user_repo.save_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.full_name
+    )
+
+    if user['confirm'] == False:
+        await message.answer("Please confirm your account first. Use /confirm command.", show_alert=True)
+        return
+
     args = message.text.split()
     if len(args) != 2:
         await message.answer(
@@ -1928,18 +1919,15 @@ async def command_task_handler(message: Message) -> None:
         await message.answer(f"❌ Issue {issue_ref} not found.")
         return
 
+    # Parse dates for formatting
+    due_date = issue.get('due_date')
     # Format issue details
     details = (
-        f"*{issue['team']}-{issue['number']}*\n\n"
-        f"📋 Title: {issue['title']}\n"
-        f"📊 State: {issue['state']}\n"
-        f"🎯 Points: {issue['points']}\n"
-        f"⚡ Priority: {issue['priority']}\n"
-        f"📁 Project: {issue['project']}\n"
-        f"📅 Due Date: {issue['due_date']}\n"
-        f"🕒 Created: {issue['created_at']}\n"
-        f"🏷️ Labels: {', '.join(issue['labels'])}\n\n"
-        f"📝 Description:\n{issue['description']}"
+        f"*{issue['team']}-{issue['number']}  {issue['title']} ({issue['points']} pts)*\n\n"
+        f"{format_priority(issue['priority'])}\n"
+        f"📅 Due Date: {format_datetime(due_date) if due_date else 'No Due Date'}\n"
+        f"📁 Project: {issue['project']} ({', '.join(issue['labels'])})\n\n"
+        f"{issue['description']}"
     )
     
     await message.answer(details, parse_mode="Markdown", reply_markup=create_task_keyboard(issue))
@@ -1951,21 +1939,211 @@ async def claim_task_handler(callback: CallbackQuery, state: FSMContext) -> None
     team = parts[2]
     number = parts[3]
 
+    request = await points_requests_repo.get_user_request(db, callback.from_user.id, f"{team}-{number}")
+    if request and request['state'] == 'approved':
+        await callback.message.edit_text("You have already claimed this task.")
+        return
+    if request and request['state'] == 'pending':
+        await callback.message.edit_text("You have already sent a request to claim this task. Please wait for the admin to review your request.")
+        return
+    # Store task info in state
+    await state.update_data(team=team, number=number)
+
     back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Back", callback_data=f"task_{team}_{number}")]
     ])
-    await callback.message.edit_text("You are about to claim the task. Please send your motivation. Please explain short what you have done. You can also send /cancel to cancel the claim.", reply_markup=back_keyboard)
+    await callback.message.edit_text(
+        "You are about to claim the task. Please send your motivation. "
+        "Please explain what you have done and why you deserve the points. "
+        "You can also send /cancel to cancel the claim.", 
+        reply_markup=back_keyboard
+    )
     await state.set_state(ClaimTaskState.MOTIVATION)
 
 @dp.message(ClaimTaskState.MOTIVATION)
-async def process_motivation(message: Message, state: FSMContext) -> None:
+async def process_motivation(message: Message, state: FSMContext, bot: Bot) -> None:
     """Process the motivation state"""
     if message.text == "/cancel":
         await message.answer("Claim cancelled.")
         await state.clear()
-    else:
-        await message.answer("Thank you for your motivation. We will review your claim and get back to you soon.")
+        return
+
+    # Get data from state
+    data = await state.get_data()
+    if not data or 'team' not in data or 'number' not in data:
+        await message.answer("❌ Error: Task information not found. Please try claiming the task again.")
         await state.clear()
+        return
+
+    team = data['team']
+    number = data['number']
+    motivation = message.text
+
+    try:
+        # Get issue details to get points
+        issue = await get_issue_by_id(team, number)
+        if not issue:
+            await message.answer("❌ Error: Task not found. Please try again.")
+            await state.clear()
+            return
+
+        # Create points request
+        issue_id = f"{team}-{number}"
+        await points_requests_repo.create_request(
+            db,
+            user_id=message.from_user.id,
+            issue_id=issue_id,
+            points=int(issue['points']),
+            motivation=motivation
+        )
+
+        await message.answer(
+            f"✅ Points request submitted!\n\n"
+            f"Task: {team}-{number}\n"
+            f"Points: {issue['points']}\n\n"
+            f"We will review your request and get back to you soon."
+        )
+
+           # Notify admins
+        admins = await user_repo.get_admins()
+        admin_message = (
+            f"🎯 New points request from @{message.from_user.username}\n\n"
+            f"Use /points to review the request"
+        )
+        
+        for admin in admins:
+            try:
+                await bot.send_message(admin['id'], admin_message)
+            except Exception as e:
+                logging.error(f"Error sending message to admin {admin['id']}: {e}")
+
+
+        await state.clear()
+
+    except Exception as e:
+        logging.error(f"Error creating points request: {e}")
+        await message.answer("❌ An error occurred while submitting your request. Please try again.")
+        await state.clear()
+
+@dp.message(Command("points"))
+async def command_points_handler(message: Message) -> None:
+    """Handle /points command for admins"""
+    user = await user_repo.get_user(message.from_user.id)
+    if user['role'] != 'admin':
+        await message.answer("You are not authorized to use this command.")
+        return
+
+    requests = await points_requests_repo.get_requests(db)
+    if not requests:
+        await message.answer("No points requests available.")
+        return
+
+    await message.answer(
+        f"📊 Points Requests (Page 1):",
+        reply_markup=create_points_requests_keyboard(requests, 0)
+    )
+
+@dp.callback_query(F.data.startswith("points_page_"))
+async def points_page_handler(callback: CallbackQuery) -> None:
+    """Handle points requests pagination"""
+    try:
+        page = int(callback.data.split("_")[2])
+        
+        requests = await points_requests_repo.get_requests(db)
+        if not requests:
+            await callback.answer("No points requests available", show_alert=True)
+            return
+            
+        await callback.message.edit_text(
+            f"📊 Points Requests (Page {page + 1}):",
+            reply_markup=create_points_requests_keyboard(requests, page)
+        )
+            
+    except Exception as e:
+        logging.error(f"Error in points_page_handler: {e}")
+        await callback.answer("An error occurred while changing pages", show_alert=True)
+
+@dp.callback_query(F.data.startswith("points_request_"))
+async def points_request_handler(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle points request button clicks"""
+    request_id = int(callback.data.split("_")[2])
+    page = int(callback.data.split("_")[3])
+    
+    request = await points_requests_repo.get_request_by_id(db, request_id)
+    if not request:
+        await callback.answer("Request not found", show_alert=True)
+        return
+
+    user = await user_repo.get_user(request['user_id'])
+    text = (
+        f"🎯 Points Request\n\n"
+        f"From: @{user['username']}\n"
+        f"Task: [{request['issue_id']}](https://linear.app/aaltoes25/issue/{request['issue_id']})\n"
+        f"Points: {request['points']}\n\n"
+        f"Motivation:\n{request['motivation']}"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=create_approve_points_request_keyboard(request_id, page),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("change_points_state_"))
+async def change_points_state(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle points request state change"""
+    request_id = int(callback.data.split("_")[3])
+    state = int(callback.data.split("_")[4])
+    page = int(callback.data.split("_")[5])
+    
+    request = await points_requests_repo.get_request_by_id(db, request_id)
+    if not request:
+        await callback.answer("Request not found", show_alert=True)
+        return
+
+    try:
+        if state == 1:  # Approve
+            await points_requests_repo.update_request_state(db, request_id, 'approved')
+            await points_repo.add_points(db, request['user_id'], request['points'])
+            await user_repo.update_points(request['user_id'], request['points'])
+            await bot.send_message(
+                request['user_id'],
+                f"✅ Your points request for {request['issue_id']} has been approved!\n"
+                f"You received {request['points']} points."
+            )
+        else:  # Reject
+            await points_requests_repo.update_request_state(db, request_id, 'rejected')
+            await bot.send_message(
+                request['user_id'],
+                f"❌ Your points request for {request['issue_id']} has been rejected."
+            )
+
+        # Refresh requests list
+        requests = await points_requests_repo.get_requests(db)
+        if requests:
+            await callback.message.edit_text(
+                f"📊 Points Requests (Page {page + 1}):",
+                reply_markup=create_points_requests_keyboard(requests, page)
+            )
+        else:
+            await callback.message.edit_text("No points requests available.")
+            
+    except Exception as e:
+        logging.error(f"Error changing points request state: {e}")
+        await callback.answer("An error occurred while processing the request", show_alert=True)
+@dp.message(Command('profile'))
+async def command_profile_handler(message: Message) -> None:
+    """Handle /profile command"""
+    user = await user_repo.get_user(message.from_user.id)
+    if not user:
+        await message.answer("You are not registered in the system.")
+        return
+    else:
+        await message.answer(
+                             f"Name: {user['name']}\n"
+                             f"Points: {user['points']}\n"
+                             f"Role: {user['role']}\n"
+        )
 
 @dp.message()
 async def handle_unknown_message(message: Message) -> None:
@@ -1984,6 +2162,8 @@ async def main() -> None:
     await books_repo.init(db)
     await borrowings_repo.init(db)
     await requests_repo.init(db)
+    await points_requests_repo.init(db)
+    await points_repo.init(db)
 
     # Initialize events
     global current_events

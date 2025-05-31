@@ -363,3 +363,67 @@ def create_task_keyboard(issue: Dict) -> InlineKeyboardMarkup:
     keyboard = []
     keyboard.append([InlineKeyboardButton(text="Claim", callback_data=f"claim_task_{issue['team']}_{issue['number']}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_points_requests_keyboard(requests: List[Dict], page: int = 0) -> InlineKeyboardMarkup:
+    """Create keyboard for points requests list with pagination"""
+    items_per_page = 5
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    current_requests = requests[start_idx:end_idx]
+    
+    keyboard = []
+    
+    # Add request buttons
+    for request in current_requests:
+       
+        
+        button_text = f"{request['username']} - {request['issue_id']} ({request['points']} pts)"
+        keyboard.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f"points_request_{request['request_id']}_{page}"
+            )
+        ])
+    
+    # Add navigation buttons
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️ Previous",
+                callback_data=f"points_page_{page-1}"
+            )
+        )
+    if end_idx < len(requests):
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="Next ➡️",
+                callback_data=f"points_page_{page+1}"
+            )
+        )
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_approve_points_request_keyboard(request_id: int, page: int) -> InlineKeyboardMarkup:
+    """Create keyboard for approving/rejecting points requests"""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text="✅ Approve",
+                callback_data=f"change_points_state_{request_id}_1_{page}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Reject",
+                callback_data=f"change_points_state_{request_id}_0_{page}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Back to List",
+                callback_data=f"points_page_{page}"
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

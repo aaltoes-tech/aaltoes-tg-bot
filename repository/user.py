@@ -33,7 +33,7 @@ class UserRepository:
                 ON CONFLICT (id) 
                 DO UPDATE SET username = $2, name = $3
             """, user_id, username, name)
-            return True
+            return await self.get_user(user_id)
         except Exception as e:
             logging.error(f"Failed to save user: {e}")
             return False
@@ -58,6 +58,17 @@ class UserRepository:
             return True
         except Exception as e:
             logging.error(f"Failed to update user: {e}")
+            return False
+    async def update_points(self, user_id: int, points: int):
+        """Update points for a user by adding points in a single query"""
+        try:
+            await self.db.execute(
+                "UPDATE tg_user SET points = COALESCE(points, 0) + $1 WHERE id = $2",
+                points, user_id
+            )
+            return True
+        except Exception as e:
+            logging.error(f"Failed to update points: {e}")
             return False
     
     async def get_admins(self):
