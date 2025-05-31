@@ -81,6 +81,7 @@ help_message = (
     "/events \- View upcoming events\n"
     "/reminders \- View your reminders\n\n"
     "👤 *Profile*\n"
+    "/profile \- View your profile\n"
     "/change\_name \- Update your name\n\n"   
     "💡 *Tip*: Use /menu for quick access to all features"
 )
