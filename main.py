@@ -1055,6 +1055,7 @@ async def command_admin_handler(message: Message) -> None:
     else:
         admin_commands = (
             "Admin Commands:\n\n"
+            "/points - Show points requests\n"
             "/refresh - Refresh events list\n"
             "/refresh_books - Refresh books list\n"
             "/check - Check pending borrowings\n"
