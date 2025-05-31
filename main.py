@@ -238,32 +238,31 @@ async def get_issue_by_id(team: str, number: str):
 
         endpoint = HTTPEndpoint("https://api.linear.app/graphql", {"Authorization": token_data})
         op = Operation(Query)
+
         
         issue = op.issues(
-            filter={"number": {"eq": issue_number}, "team": {"name": {"eq": team}}}
+            filter={"assignee": {"isMe": {"eq": True}}, "state": {"type": {"in": ["unstarted", "started"]}}, "number": {"eq": issue_number}, "team": {"key": {"eq": team}}}
         )
         
-        issue.edges.node.id()
-        issue.edges.node.number()
-        issue.edges.node.team.name()
-        issue.edges.node.title()
-        issue.edges.node.description()
-        issue.edges.node.estimate()
-        issue.edges.node.labels.nodes.name()
-        issue.edges.node.due_date()
-        issue.edges.node.priority()
-        issue.edges.node.state.name()
-        issue.edges.node.project.name()
-        issue.edges.node.created_at()
-
+        issue.nodes.id()
+        issue.nodes.number()
+        issue.nodes.team.key()
+        issue.nodes.title()
+        issue.nodes.description()
+        issue.nodes.estimate()
+        issue.nodes.labels.nodes.name()
+        issue.nodes.due_date()
+        issue.nodes.priority()
+        issue.nodes.state.name()
+        issue.nodes.project.name()
+        issue.nodes.created_at()
         result = endpoint(op)['data']
-        edges = result.get("issues", {}).get("edges", [])
-        if not edges:
+        nodes = result.get("issues", {}).get("nodes", [])
+        if not nodes:
             logging.error(f"No issue found for team {team} and number {issue_number}")
             return None
             
-        edge = edges[0]
-        node = edge["node"]
+        node = nodes[0]
         
         # Parse due date if it exists
         due_date = None
@@ -275,20 +274,19 @@ async def get_issue_by_id(team: str, number: str):
         try:
             project = node.get("project", {}).get("name")
         except Exception as e:
-            logging.error(f"Error parsing project: {e}")
             project = "No Project"
         
         return {
             "id": node.get("id"),
-            "number": node.get("number", "No Number"),
+            "number": node.get("number"),
             "title": node.get("title") or "No Title",
             "description": node.get("description") or "No Description",
-            "points": str(node.get("estimate", 1)),
-            "team": node.get("team", {}).get("name") or "No Team",
+            "points": node.get("estimate") or 1,
+            "team": node.get("team", {}).get("key") or "No Team",
             "labels": [label.get("name") for label in node.get("labels", {}).get("nodes", [])] if node.get("labels", {}).get("nodes") else [],
             "due_date": due_date,
             "created_at": node.get("createdAt") or "No Created At",
-            "priority": node.get("priority", 0),  # Keep raw priority value
+            "priority": node.get("priority") or 0,  # Keep raw priority value
             "project": project,
             "state": node.get("state", {}).get("name") or "No State"
         }
@@ -1911,6 +1909,10 @@ async def command_task_handler(message: Message) -> None:
     try:
         # Split the issue reference into team and number
         team, number = issue_ref.split("-")
+        issue = await get_issue_by_id(team, number)
+        if not issue:
+            await message.answer(f"❌ Issue {issue_ref} not found.")
+            return
     except ValueError:
         await message.answer(
             "❌ Invalid issue format.\n"
@@ -1920,10 +1922,7 @@ async def command_task_handler(message: Message) -> None:
         return
 
     # Get the issue details
-    issue = await get_issue_by_id(team, number)
-    if not issue:
-        await message.answer(f"❌ Issue {issue_ref} not found.")
-        return
+
 
     # Parse dates for formatting
     due_date = issue.get('due_date')
@@ -1932,7 +1931,7 @@ async def command_task_handler(message: Message) -> None:
         f"*{issue['team']}-{issue['number']}  {issue['title']} ({issue['points']} pts)*\n\n"
         f"{format_priority(issue['priority'])}\n"
         f"📅 Due Date: {format_datetime(due_date) if due_date else 'No Due Date'}\n"
-        f"📁 Project: {issue['project']} ({', '.join(issue['labels'])})\n\n"
+        f"📁 Project: {issue['project']} {'(' + ', '.join(issue['labels']) + ')' if issue['labels'] else ''}\n\n"
         f"{issue['description']}"
     )
     
