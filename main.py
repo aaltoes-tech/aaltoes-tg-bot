@@ -2,6 +2,7 @@ import asyncio
 import logging
 import secrets
 import sys
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any, Union
 import pytz
@@ -9,14 +10,19 @@ from aiogram import Bot, Dispatcher, html, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters.command import Command
-from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto
+from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from settings import phrases, info_message, help_message
 from random import choice
-
-from settings import settings
+import json
+from upstash_redis import Redis
+import json
+from sgqlc.endpoint.http import HTTPEndpoint
+from sgqlc.operation import Operation
+from schema import Query
+from settings import settings, linear_per_page
 from db import db
 from repository.user import UserRepository
 from repository.events import EventsRepository
@@ -24,9 +30,12 @@ from repository.reminders import RemindersRepository
 from repository.books import BooksRepository
 from repository.borrowings import BorrowingsRepository
 from repository.requests import RequestsRepository
-from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard, create_actions_keyboard
+from keyboards import create_events_keyboard, create_event_details_keyboard, create_books_keyboard, create_book_details_keyboard, create_instance_selection_keyboard, create_pending_borrowings_keyboard,create_approve_borrowing_keyboard, create_return_keyboard, create_apply_keyboard, create_confirm_keyboard, create_requests_keyboard, create_approve_request_keyboard, create_users_keyboard, create_update_user_keyboard, create_actions_keyboard, create_task_keyboard
+from upstash_redis import Redis
+
 
 # Initialize repositories
+redis = Redis(url=settings.UPSTASH_REDIS_URL, token=settings.UPSTASH_REDIS_TOKEN)
 user_repo = UserRepository()
 events_repo = EventsRepository(api_key=settings.LUMA_API_KEY)
 reminders_repo = RemindersRepository()
@@ -75,6 +84,9 @@ class ConfirmState(StatesGroup):
 
 class ChangeNameState(StatesGroup):
     NEW_NAME = State()
+
+class ClaimTaskState(StatesGroup):
+    MOTIVATION = State()
 
 async def refresh_events() -> None:
     """Refresh events data from the API"""
@@ -167,6 +179,94 @@ def get_optimized_image_url(ipfs_url: str) -> str:
         return f"{ipfs_url}?img-width=500&img-quality=80&img-format=webp"
     return ipfs_url
 
+async def get_linear_token():
+    """Get Linear access token from Redis"""
+    try:
+        token_data = redis.get("cred:token:linear")
+        if not token_data:
+            logging.error("No Linear token found in Redis")
+            return None
+            
+        try:
+            parsed_data = json.loads(token_data)
+            if not isinstance(parsed_data, dict) or "json" not in parsed_data or "accessToken" not in parsed_data["json"]:
+                logging.error("Invalid token data format in Redis")
+                return None
+            return parsed_data["json"]["accessToken"]
+        except json.JSONDecodeError as e:
+            logging.error(f"Error parsing Linear token JSON: {e}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Unexpected error getting Linear token: {e}")
+        return None
+
+async def get_issue_by_id(team: str, number: str):
+    """
+    Load Linear issues with pagination
+    Args:
+        team: Team name of the issue
+        number: Issue number (will be converted to integer)
+    """
+    token_data = await get_linear_token()
+    if not token_data:
+        logging.error("Failed to get Linear token")
+        return None
+
+    try:
+        # Convert number to integer
+        try:
+            issue_number = int(number)
+        except ValueError:
+            logging.error(f"Invalid issue number format: {number}")
+            return None
+
+        endpoint = HTTPEndpoint("https://api.linear.app/graphql", {"Authorization": token_data})
+        op = Operation(Query)
+        
+        issue = op.issues(
+            filter={"number": {"eq": issue_number}, "team": {"name": {"eq": team}}}
+        )
+        
+        issue.edges.node.id()
+        issue.edges.node.number()
+        issue.edges.node.team.name()
+        issue.edges.node.title()
+        issue.edges.node.description()
+        issue.edges.node.estimate()
+        issue.edges.node.labels.nodes.name()
+        issue.edges.node.due_date()
+        issue.edges.node.priority()
+        issue.edges.node.state.name()
+        issue.edges.node.project.name()
+        issue.edges.node.created_at()
+
+        result = endpoint(op)['data']
+        edges = result.get("issues", {}).get("edges", [])
+        if not edges:
+            logging.error(f"No issue found for team {team} and number {issue_number}")
+            return None
+            
+        edge = edges[0]
+        node = edge["node"]
+        
+        return {
+            "id": node.get("id"),
+            "number": node.get("number") or "No Number",
+            "title": node.get("title") or "No Title",
+            "description": node.get("description") or "No Description",
+            "points": str(node.get("estimate") or "1"),
+            "team": node.get("team", {}).get("name") or "No Team",
+            "labels": [label.get("name") for label in node.get("labels", {}).get("nodes", [])],
+            "due_date": node.get("dueDate") or "No Due Date",
+            "created_at": node.get("createdAt") or "No Created At",
+            "priority": node.get("priority") or "No Priority",
+            "project": node.get("project", {}).get("name") or "No Project",
+            "state": node.get("state", {}).get("name") or "No State"
+        }
+    except Exception as e:
+        logging.error(f"Error fetching issue from Linear: {e}")
+        return None
 
 @dp.message(Command("start"))
 async def command_start_handler(message: Message) -> None:
@@ -491,7 +591,7 @@ async def send_reminder(bot: Bot, user_id: int, event: Dict[str, Any]) -> None:
     """Send a reminder message to the user"""
     try:
         message = (
-            f"🔔 Reminder: {event['title']} starts in 1 hour!\n\n"
+            f"🔔 Reminder: {event['title']} starts in 1 day!\n\n"
             f"📅 {format_event_time(event)}\n"
             f"📍 {event['location']}"
         )
@@ -1718,12 +1818,159 @@ async def process_new_name(message: Message, state: FSMContext) -> None:
         await user_repo.update_user(message.from_user.id, name=name)
         await state.clear()
 
+@dp.callback_query(F.data.startswith("helper"))
+async def linear_handler(callback: CallbackQuery) -> None:
+   """Handle /helper command"""
+   await callback.message.edit_text("Thank you for your interest to help us. Please choose a category with which you want to help us.", reply_markup=create_helper_keyboard())
+
+
+@dp.message(Command("helper"))
+async def command_helper_handler(message: Message) -> None:
+    """Handle /helper command"""
+    await message.answer("You can find list of issues on the website. /claim <issue_id> to claim an issue.", reply_markup=create_helper_keyboard())
+
+@dp.callback_query(F.data.startswith("issue_"))
+async def linear_issue_handler(callback: CallbackQuery) -> None:
+    """Handle Linear issue selection"""
+    # Parse callback data: issue_label_issueRef
+    parts = callback.data.split("_")
+    label = parts[1]
+    team = parts[2]
+    number = parts[3]
+
+    issue = await get_issue_by_id(team, number)
+    
+    if issue:
+        # Format issue details
+        details = (
+            f"*{issue['issue_name']}*\n"
+            f"Title: {issue['title']}\n"
+            f"State: {issue['state']}\n"
+            f"Points: {issue['points']}\n"
+            f"Priority: {issue['priority']}\n"
+            f"Project: {issue['project']}\n"
+            f"Due Date: {issue['due_date']}\n"
+            f"Created: {issue['created_at']}\n"
+            f"Labels: {', '.join(issue['labels'])}\n"
+            f"Description: {issue['description']}"
+        )
+        
+        # Create keyboard to go back to issues list
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Back to Issues", callback_data=f"linear_{label}_current_None")]
+        ])
+        
+        await callback.message.edit_text(details, reply_markup=keyboard, parse_mode="Markdown")
+    else:
+        await callback.answer("Issue not found", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("task_"))
+async def command_task_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    # Get the issue details
+    parts = callback.data.split("_")
+    team = parts[1]
+    number = parts[2]
+
+    issue = await get_issue_by_id(team, number)
+    if not issue:
+        await callback.message.edit_text(f"❌ Issue {team}-{number} not found.")
+        return
+
+    # Format issue details
+    details = (
+        f"*{issue['team']}-{issue['number']}*\n\n"
+        f"📋 Title: {issue['title']}\n"
+        f"📊 State: {issue['state']}\n"
+        f"🎯 Points: {issue['points']}\n"
+        f"⚡ Priority: {issue['priority']}\n"
+        f"📁 Project: {issue['project']}\n"
+        f"📅 Due Date: {issue['due_date']}\n"
+        f"🕒 Created: {issue['created_at']}\n"
+        f"🏷️ Labels: {', '.join(issue['labels'])}\n\n"
+        f"📝 Description:\n{issue['description']}"
+    )
+    
+    await callback.message.edit_text(details, parse_mode="Markdown", reply_markup=create_task_keyboard(issue))
+
+
+
+@dp.message(Command("task"))
+async def command_task_handler(message: Message) -> None:
+    """Handle /task command to show Linear issue information"""
+    # Get the issue ID from the command arguments
+    args = message.text.split()
+    if len(args) != 2:
+        await message.answer(
+            "❌ Please provide an issue ID\n\n"
+            "Usage:\n"
+            "/task TSC-80"
+        )
+        return
+
+    issue_ref = args[1]  # Format: TSC-80
+    
+    try:
+        # Split the issue reference into team and number
+        team, number = issue_ref.split("-")
+    except ValueError:
+        await message.answer(
+            "❌ Invalid issue format.\n"
+            "Please use format: TEAM-NUMBER\n"
+            "Example: TSC-80"
+        )
+        return
+
+    # Get the issue details
+    issue = await get_issue_by_id(team, number)
+    if not issue:
+        await message.answer(f"❌ Issue {issue_ref} not found.")
+        return
+
+    # Format issue details
+    details = (
+        f"*{issue['team']}-{issue['number']}*\n\n"
+        f"📋 Title: {issue['title']}\n"
+        f"📊 State: {issue['state']}\n"
+        f"🎯 Points: {issue['points']}\n"
+        f"⚡ Priority: {issue['priority']}\n"
+        f"📁 Project: {issue['project']}\n"
+        f"📅 Due Date: {issue['due_date']}\n"
+        f"🕒 Created: {issue['created_at']}\n"
+        f"🏷️ Labels: {', '.join(issue['labels'])}\n\n"
+        f"📝 Description:\n{issue['description']}"
+    )
+    
+    await message.answer(details, parse_mode="Markdown", reply_markup=create_task_keyboard(issue))
+
+@dp.callback_query(F.data.startswith("claim_task_"))
+async def claim_task_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle claim task button click"""
+    parts = callback.data.split("_")
+    team = parts[2]
+    number = parts[3]
+
+    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Back", callback_data=f"task_{team}_{number}")]
+    ])
+    await callback.message.edit_text("You are about to claim the task. Please send your motivation. Please explain short what you have done. You can also send /cancel to cancel the claim.", reply_markup=back_keyboard)
+    await state.set_state(ClaimTaskState.MOTIVATION)
+
+@dp.message(ClaimTaskState.MOTIVATION)
+async def process_motivation(message: Message, state: FSMContext) -> None:
+    """Process the motivation state"""
+    if message.text == "/cancel":
+        await message.answer("Claim cancelled.")
+        await state.clear()
+    else:
+        await message.answer("Thank you for your motivation. We will review your claim and get back to you soon.")
+        await state.clear()
 
 @dp.message()
 async def handle_unknown_message(message: Message) -> None:
     """Handle unknown messages"""
     await message.answer(choice(phrases))
-
 
 async def main() -> None:
     
@@ -1751,6 +1998,10 @@ async def main() -> None:
     all_reminders = await reminders_repo.get_reminders(db)
     for reminder in all_reminders:
         event = current_events.get(reminder['event_id'])
+
+        if not event:
+            await reminders_repo.delete_reminder(db, reminder['user_id'], reminder['event_id'])
+            continue
 
         if event['start_time'].astimezone(pytz.utc) < datetime.now().astimezone(pytz.utc):
             await reminders_repo.delete_reminder(db, reminder['user_id'], reminder['event_id'])

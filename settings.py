@@ -7,12 +7,13 @@ load_dotenv()
 class Settings(BaseSettings):
     """Application settings."""
     BOT_TOKEN: str
+    UPSTASH_REDIS_URL: str
+    UPSTASH_REDIS_TOKEN: str
     DATABASE_URL_UNPOOLED: str
     LUMA_API_KEY: str
     ADMINS: list[str] = [
         '658415666', '468596234'
     ]
-
     class Config:
         env_file = ".env"
         extra = "ignore"  # This will ignore extra environment variables
@@ -83,3 +84,5 @@ help_message = (
     "/change\_name \- Update your name\n\n"   
     "💡 *Tip*: Use /menu for quick access to all features"
 )
+
+linear_per_page = 1

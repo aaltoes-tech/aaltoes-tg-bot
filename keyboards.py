@@ -30,8 +30,6 @@ def format_event_time(event: Dict[str, Any]) -> str:
         # Convert to event's local time
         local_time = utc_time.astimezone(event_tz)
         
-        # Format time with timezone abbreviation
-        tz_abbr = local_time.strftime('%Z')
         return f"{local_time.strftime('%d %b %Y, %H:%M')}"
     except Exception as e:
         logging.error(f"Error formatting event time: {e}")
@@ -359,3 +357,9 @@ def create_actions_keyboard(page: int = 0) -> InlineKeyboardMarkup:
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
+def create_task_keyboard(issue: Dict) -> InlineKeyboardMarkup:
+    """Create keyboard for task"""
+    keyboard = []
+    keyboard.append([InlineKeyboardButton(text="Claim", callback_data=f"claim_task_{issue['team']}_{issue['number']}")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

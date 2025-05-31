@@ -13,7 +13,8 @@ class UserRepository:
                     name TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     role TEXT DEFAULT 'user',
-                    confirm BOOLEAN DEFAULT FALSE
+                    confirm BOOLEAN DEFAULT FALSE,
+                    points INT DEFAULT 0
                 )
             """)
             logging.info("User table initialized")
