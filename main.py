@@ -136,6 +136,12 @@ def get_event_timezone(event: Dict[str, Any]) -> pytz.timezone:
     # Fallback to Helsinki timezone if timezone data is not available
     return pytz.timezone('Europe/Helsinki')
 
+def fmt_telegram(input: str) -> str:
+    """Escape special characters for Telegram Markdown formatting"""
+    if not input:
+        return input
+    return input.replace("(", "\\(").replace(")", "\\)").replace("_", "\\_").replace(".", "\\.").replace("-", "\\-")
+
 async def get_users_with_access(force_refresh: bool = False):
     global users_with_access
     if not users_with_access or force_refresh:
@@ -432,7 +438,7 @@ async def event_callback_handler(callback: CallbackQuery) -> None:
     has_reminder = any(r['event_id'] == event_id for r in user_reminders)
     
     message_text = (
-        f"*{event['title']}*\n\n"
+        f"*{fmt_telegram(event['title'])}*\n\n"
         f"📅 {format_event_time(event)}\n"
         f"📍 {event['location']}\n\n"
     )
@@ -552,7 +558,7 @@ async def reminder_callback_handler(callback: CallbackQuery) -> None:
     reminder_tasks[task_key] = task
 
     message_text = (
-        f"*{event['title']}*\n\n"
+        f"*{fmt_telegram(event['title'])}*\n\n"
         f"📅 {format_event_time(event)}\n"
         f"📍 {event['location']}\n\n"
     )
@@ -587,7 +593,7 @@ async def remove_reminder_handler(callback: CallbackQuery) -> None:
         event = current_events.get(event_id)
         if event:
             message_text = (
-                f"*{event['title']}*\n\n"
+                f"*{fmt_telegram(event['title'])}*\n\n"
                 f"📅 {format_event_time(event)}\n"
                 f"📍 {event['location']}\n\n"
             )
@@ -912,7 +918,7 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
     instance_id = instances[0]['instance_id']
     
     # Build message text with optional fields
-    message_text = f"📚 *{book.get('title', 'No title available')}*\n\n"
+    message_text = f"📚 *{fmt_telegram(book.get('title', 'No title available'))}*\n\n"
     
     if book.get('author'):
         message_text += f"👤 Author: {book['author']}\n"
@@ -926,7 +932,7 @@ async def book_callback_handler(callback: CallbackQuery) -> None:
     message_text += f"📖 Copies: {available_instances}/{total_instances} available\n\n"
     
     if book.get('description'):
-        message_text += f"{book['description']}\n\n"
+        message_text += f"{fmt_telegram(book['description'])}\n\n"
 
     try:
         file_id = await books_repo.get_file_id(db, instance_id)
@@ -1489,7 +1495,7 @@ async def command_actions_handler(message: Message) -> None:
     """Handle /menu command"""
     keyboard = create_actions_keyboard(0)
     user = await user_repo.get_user(message.from_user.id)
-    name = user['name'] if user['name'] else "@"+user['username']
+    name = user['name'] if user['name'] else "@"+fmt_telegram(user['username'])
     await message.answer(f"Hello, {name}! What do you want to do?", reply_markup=keyboard)
 
 
@@ -1710,7 +1716,7 @@ async def request_handler(callback: CallbackQuery, bot: Bot) -> None:
         await bot.send_message(request['user_id'], f"Admin saw your request for Startup Sauna access.")
         await requests_repo.update_request_state(db, request_id, 'pending')
     user = await user_repo.get_user(request['user_id'])
-    text = f"Request ID: {request['request_id']}\nName: {user['name']}\nUsername: @{user['username']}\n\nMotivation: \n{request['motivation']}"
+    text = f"Request ID: {request['request_id']}\nName: {user['name']}\nUsername: @{user['username']}\n\nMotivation: \n{fmt_telegram(request['motivation'])}"
     await callback.message.edit_text(text, reply_markup=create_approve_request_keyboard(request_id, page))
 
 @dp.callback_query(F.data.startswith("change_request_state_"))
@@ -1869,11 +1875,11 @@ async def command_task_handler(callback: CallbackQuery, state: FSMContext) -> No
     due_date = issue.get('due_date')
     # Format issue details
     details = (
-        f"*{issue['team']}-{issue['number']}  {issue['title']} ({issue['points']} pts)*\n\n"
+        f"*{issue['team']}-{issue['number']}  {fmt_telegram(issue['title'])} ({issue['points']} pts)*\n\n"
         f"{format_priority(issue['priority'])}\n"
         f"📅 Due Date: {format_datetime(due_date) if due_date else 'No Due Date'}\n"
-        f"📁 Project: {issue['project']} ({', '.join(issue['labels'])})\n\n"
-        f"{issue['description']}"
+        f"📁 Project: {fmt_telegram(issue['project'])} {'(' + fmt_telegram(', '.join(issue['labels'])) + ')' if issue['labels'] else ''}\n\n"
+        f"{fmt_telegram(issue['description'])}"
     )
     
     await callback.message.edit_text(details, parse_mode="Markdown", reply_markup=create_task_keyboard(issue))
@@ -1928,11 +1934,11 @@ async def command_task_handler(message: Message) -> None:
     due_date = issue.get('due_date')
     # Format issue details
     details = (
-        f"*{issue['team']}-{issue['number']}  {issue['title']} ({issue['points']} pts)*\n\n"
+        f"*{issue['team']}-{issue['number']}  {fmt_telegram(issue['title'])} ({issue['points']} pts)*\n\n"
         f"{format_priority(issue['priority'])}\n"
         f"📅 Due Date: {format_datetime(due_date) if due_date else 'No Due Date'}\n"
-        f"📁 Project: {issue['project']} {'(' + ', '.join(issue['labels']) + ')' if issue['labels'] else ''}\n\n"
-        f"{issue['description']}"
+        f"📁 Project: {fmt_telegram(issue['project'])} {'(' + fmt_telegram(', '.join(issue['labels'])) + ')' if issue['labels'] else ''}\n\n"
+        f"{fmt_telegram(issue['description'])}"
     )
     
     await message.answer(details, parse_mode="Markdown", reply_markup=create_task_keyboard(issue))
@@ -2080,12 +2086,15 @@ async def points_request_handler(callback: CallbackQuery, bot: Bot) -> None:
         return
 
     user = await user_repo.get_user(request['user_id'])
+    # Format the issue ID as a proper Markdown link
+    issue_link = f"[{request['issue_id']}](https://linear.app/aaltoes25/issue/{request['issue_id']})"
+    
     text = (
         f"🎯 Points Request\n\n"
-        f"From: @{user['username']}\n"
-        f"Task: [{request['issue_id']}](https://linear.app/aaltoes25/issue/{request['issue_id']})\n"
+        f"From: @{fmt_telegram(user['username'])}\n"
+        f"Task: {issue_link}\n"
         f"Points: {request['points']}\n\n"
-        f"Motivation:\n{request['motivation']}"
+        f"Motivation:\n{fmt_telegram(request['motivation'])}"
     )
     
     await callback.message.edit_text(
