@@ -272,6 +272,11 @@ async def get_issue_by_id(team: str, number: str):
                 due_date = datetime.fromisoformat(node["dueDate"].replace('Z', '+00:00'))
             except Exception as e:
                 logging.error(f"Error parsing due date: {e}")
+        try:
+            project = node.get("project", {}).get("name")
+        except Exception as e:
+            logging.error(f"Error parsing project: {e}")
+            project = "No Project"
         
         return {
             "id": node.get("id"),
@@ -284,7 +289,7 @@ async def get_issue_by_id(team: str, number: str):
             "due_date": due_date,
             "created_at": node.get("createdAt") or "No Created At",
             "priority": node.get("priority", 0),  # Keep raw priority value
-            "project": node.get("project", {}) if node.get("project") else "No Project",
+            "project": project,
             "state": node.get("state", {}).get("name") or "No State"
         }
     except Exception as e:
